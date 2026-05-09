@@ -1,4 +1,4 @@
-gradio==6.14.1
+gradio==6.14.0
 transformers
 tokenizers
 sentence-transformers
