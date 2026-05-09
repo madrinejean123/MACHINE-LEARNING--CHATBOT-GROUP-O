@@ -34,8 +34,8 @@ GITHUB_PDF_URLS = [
 ]
 
 DATA_FOLDER          = "data"
-CHUNK_CSV            = "policy_chunks.csv"
-EMBEDDINGS_NPY       = "chunk_embeddings.npy"
+CHUNK_CSV            = "/home/user/app/policy_chunks.csv"
+EMBEDDINGS_NPY       = "/home/user/app/chunk_embeddings.npy"
 CHUNK_MAX_WORDS      = 150
 CHUNK_OVERLAP        = 1
 TOP_K                = 5
@@ -396,423 +396,197 @@ print("All models ready.")
 # CHAT LOGIC
 # ---------------------------------------------------------------------------
 
-def nice_source_name(raw):
-    return (
-        raw.replace(".pdf", "")
-           .replace("-", " ")
-           .replace("_", " ")
-           .strip()
-    )
+print("All models ready.")
+
+# ---------------------------------------------------------------------------
+# MEMORY
+# ---------------------------------------------------------------------------
+
+conversation_history = {}
+
+def get_history(session_id="default"):
+    return conversation_history.get(session_id, [])
+
+def update_history(session_id, role, message):
+    if session_id not in conversation_history:
+        conversation_history[session_id] = []
+    conversation_history[session_id].append((role, message))
+    conversation_history[session_id] = conversation_history[session_id][-12:]
 
 
-def render_bubble(role, content, sources=""):
-    """Return HTML for a single chat bubble."""
-    if role == "user":
-        safe = content.replace("<", "&lt;").replace(">", "&gt;")
-        return f"""
-        <div class="bubble-row user">
-          <div class="avatar user-av">You</div>
-          <div class="bubble user-bubble">{safe}</div>
-        </div>"""
+# ---------------------------------------------------------------------------
+# STREAM CHAT (CHATGPT STYLE TYPING)
+# ---------------------------------------------------------------------------
 
-    # bot — clean up content
-    safe = content.replace("<", "&lt;").replace(">", "&gt;")
-    # convert newlines to <br>
-    safe = safe.replace("\n", "<br>")
+def chat_stream(user_msg, audio_input, history_state):
 
-    source_html = ""
-    if sources:
-        lines = [l.strip() for l in sources.split("\n") if l.strip() and l.strip() != "Policy Sources:"]
-        tags  = "".join(
-            f'<span class="src-tag">📄 {nice_source_name(l.lstrip("- "))}</span>'
-            for l in lines if l
-        )
-        if tags:
-            source_html = f'<div class="src-row">{tags}</div>'
+    if history_state is None:
+        history_state = []
 
-    return f"""
-    <div class="bubble-row bot">
-      <div class="avatar bot-av">🛡</div>
-      <div class="bubble bot-bubble">{safe}{source_html}</div>
-    </div>"""
+    # voice input
+    if audio_input:
+        user_msg = transcribe_audio(audio_input)
 
+    if not user_msg:
+        yield history_state, render_chat(history_state), ""
+        return
 
-WELCOME_HTML = """
-<div class="welcome-card">
-  <div class="w-icon">🛡️</div>
-  <h2>Safeguarding Companion</h2>
-  <p>Ask me anything about Makerere University's safeguarding policies,
-  disability rights, sexual harassment procedures, and student protections.
-  All answers come from official policy documents.</p>
-  <div class="pill-row">
-    <span class="pill" onclick="fillQuery(this)">How do I report harassment?</span>
-    <span class="pill" onclick="fillQuery(this)">Rights for students with disabilities</span>
-    <span class="pill" onclick="fillQuery(this)">How do I file a complaint?</span>
-    <span class="pill" onclick="fillQuery(this)">What is the HIV/AIDS policy?</span>
-    <span class="pill" onclick="fillQuery(this)">Support for persons with disabilities</span>
-  </div>
-</div>"""
+    # save user message
+    history_state.append(("user", user_msg))
+    update_history("default", "user", user_msg)
+
+    yield history_state, render_chat(history_state), ""
+
+    # retrieval + answer
+    retrieved = retrieve_top_k(user_msg, embedding_model, embeddings, df)
+    answer = generate_answer(user_msg, retrieved, gen_tokenizer, gen_model, device)
+    answer = apply_simplified_language(answer)
+    answer = format_response(answer)
+
+    # STREAMING EFFECT
+    streamed = ""
+    for word in answer.split():
+        streamed += word + " "
+        temp = history_state + [("bot", streamed)]
+        yield temp, render_chat(temp), ""
+
+    history_state.append(("bot", answer))
+    update_history("default", "bot", answer)
 
 
-def build_chat_html(history):
+# ---------------------------------------------------------------------------
+# SIMPLE CHAT RENDER (CLEAN CHATGPT STYLE)
+# ---------------------------------------------------------------------------
+
+def render_chat(history):
     if not history:
-        return WELCOME_HTML
-    return "\n".join(render_bubble(r, c, s) for r, c, s in history)
+        return """
+        <div style='text-align:center;color:#8b949e;margin-top:40px;'>
+            Ask a question to begin
+        </div>
+        """
 
+    html = ""
 
-def chat_fn(user_msg, audio_input, history_state):
-    query = ""
-    if audio_input is not None:
-        query = transcribe_audio(audio_input)
-    if not query:
-        query = (user_msg or "").strip()
-    if not query:
-        return history_state, build_chat_html(history_state), ""
+    for role, msg in history:
+        msg = msg.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
 
-    history_state = list(history_state) + [("user", query, "")]
+        if role == "user":
+            html += f"""
+            <div style="display:flex;justify-content:flex-end;margin:10px;">
+              <div style="
+                background:linear-gradient(135deg,#1f6feb,#388bfd);
+                color:white;padding:12px 14px;
+                border-radius:18px;
+                max-width:70%;
+                font-size:0.95rem;">
+                {msg}
+              </div>
+            </div>
+            """
+        else:
+            html += f"""
+            <div style="display:flex;justify-content:flex-start;margin:10px;">
+              <div style="
+                background:#161b22;
+                border:1px solid #30363d;
+                color:#c9d1d9;
+                padding:12px 14px;
+                border-radius:18px;
+                max-width:70%;
+                font-size:0.95rem;">
+                {msg}
+              </div>
+            </div>
+            """
 
-    if is_greeting(query):
-        history_state.append(("bot", GREETING_RESPONSE, ""))
-        return history_state, build_chat_html(history_state), ""
-
-    retrieved = retrieve_top_k(query, embedding_model, embeddings, df)
-    answer    = generate_answer(query, retrieved, gen_tokenizer, gen_model, device)
-    answer    = apply_simplified_language(answer)
-    formatted = format_response(answer)
-
-    sources = ""
-    if not retrieved.empty:
-        names   = retrieved["source_document"].unique()
-        sources = "Policy Sources:\n" + "\n".join(f"- {n}" for n in names)
-
-    history_state.append(("bot", formatted, sources))
-    return history_state, build_chat_html(history_state), ""
+    return html
 
 
 # ---------------------------------------------------------------------------
-# CSS
+# GRADIO UI (CLEAN CHATGPT STYLE)
 # ---------------------------------------------------------------------------
+
+import gradio as gr
 
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-body, .gradio-container {
-    font-family: 'Sora', sans-serif !important;
-    background: #0d1117 !important;
-    color: #e6edf3 !important;
-    min-height: 100vh;
+body {
+    background:#0d1117 !important;
+    color:#e6edf3 !important;
+    font-family: system-ui;
 }
 
-footer, .gr-form > .label-wrap { display: none !important; }
-.gradio-container { padding: 0 !important; max-width: 100% !important; }
-.contain { padding: 0 !important; }
-
-/* ── TOP BAR ── */
-.top-bar {
-    position: sticky; top: 0; z-index: 100;
-    display: flex; align-items: center; gap: 14px;
-    padding: 14px 28px;
-    background: rgba(13,17,23,0.92);
-    backdrop-filter: blur(14px);
-    border-bottom: 1px solid #21262d;
-}
-.top-logo {
-    width: 40px; height: 40px; border-radius: 12px;
-    background: linear-gradient(135deg,#238636,#1f6feb);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px; flex-shrink: 0;
-}
-.top-title {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.1rem; color: #e6edf3;
-}
-.top-sub { font-size: 0.7rem; color: #8b949e; margin-top: 2px; }
-.online-badge {
-    margin-left: auto; font-size: 0.68rem; padding: 3px 12px;
-    border-radius: 20px; background: rgba(35,134,54,0.15);
-    color: #3fb950; border: 1px solid rgba(63,185,80,0.3);
-    font-weight: 500;
+/* chat container */
+#chat {
+    height:75vh;
+    overflow-y:auto;
+    padding:20px;
 }
 
-/* ── CHAT AREA ── */
-.chat-scroll {
-    max-width: 780px; margin: 0 auto;
-    padding: 28px 20px 160px;
-    display: flex; flex-direction: column; gap: 22px;
+/* bottom bar */
+#bar {
+    position:fixed;
+    bottom:0;
+    width:100%;
+    display:flex;
+    gap:10px;
+    padding:14px;
+    background:#161b22;
+    border-top:1px solid #30363d;
 }
 
-/* ── WELCOME ── */
-.welcome-card {
-    text-align: center; padding: 48px 20px 32px;
-    animation: fadeUp .45s ease both;
-}
-.w-icon { font-size: 3.2rem; margin-bottom: 14px; }
-.welcome-card h2 {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.7rem; color: #e6edf3; margin-bottom: 10px;
-}
-.welcome-card p {
-    color: #8b949e; font-size: 0.88rem; line-height: 1.75;
-    max-width: 480px; margin: 0 auto 26px;
-}
-.pill-row { display: flex; flex-wrap: wrap; gap: 9px; justify-content: center; }
-.pill {
-    font-size: 0.78rem; padding: 8px 16px; border-radius: 20px;
-    background: #161b22; border: 1px solid #30363d; color: #8b949e;
-    cursor: pointer; transition: all .2s; user-select: none;
-}
-.pill:hover { border-color: #58a6ff; color: #58a6ff; background: rgba(88,166,255,.07); }
-
-/* ── BUBBLES ── */
-.bubble-row {
-    display: flex; gap: 12px; align-items: flex-end;
-    animation: fadeUp .3s ease both;
-}
-.bubble-row.user { flex-direction: row-reverse; }
-
-.avatar {
-    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 700; letter-spacing: -.3px;
-}
-.bot-av  { background: linear-gradient(135deg,#238636,#1f6feb); color:#fff; font-size:16px; }
-.user-av { background: #21262d; color: #8b949e; border: 1px solid #30363d; font-size: 10px; }
-
-.bubble {
-    max-width: 74%; padding: 14px 18px;
-    font-size: 0.895rem; line-height: 1.72;
-    border-radius: 20px; position: relative;
-}
-.bot-bubble {
-    background: #161b22; border: 1px solid #21262d;
-    border-bottom-left-radius: 5px; color: #c9d1d9;
-}
-.user-bubble {
-    background: linear-gradient(135deg,#1f6feb,#388bfd);
-    border-bottom-right-radius: 5px; color: #fff;
+/* textbox */
+#msg textarea {
+    border-radius:20px !important;
+    padding:12px !important;
+    font-size:1rem !important;
 }
 
-/* source tags inside bot bubble */
-.src-row { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
-.src-tag {
-    font-size: 0.67rem; padding: 3px 9px; border-radius: 20px;
-    background: rgba(31,111,235,.12); color: #58a6ff;
-    border: 1px solid rgba(88,166,255,.2);
+/* buttons */
+#send {
+    width:48px;
+    border-radius:50%;
+    background:#238636;
+    color:white;
+    font-size:18px;
 }
-
-@keyframes fadeUp {
-    from { opacity:0; transform:translateY(10px); }
-    to   { opacity:1; transform:translateY(0); }
-}
-
-/* ── FIXED INPUT BAR ── */
-#input-bar {
-    position: fixed !important;
-    bottom: 0 !important; left: 0 !important; right: 0 !important;
-    z-index: 200 !important;
-    margin: 0 !important;
-    padding: 16px 24px 24px !important;
-    background: linear-gradient(to top, #0d1117 75%, transparent) !important;
-}
-
-/* Gradio puts a flex gap wrapper inside the row — target it */
-#input-bar > div {
-    max-width: 780px !important;
-    margin: 0 auto !important;
-    display: flex !important;
-    align-items: center !important;
-    background: #1c2128 !important;
-    border: 1.5px solid #30363d !important;
-    border-radius: 32px !important;
-    padding: 10px 10px 10px 22px !important;
-    gap: 10px !important;
-    min-height: 60px !important;
-    transition: border-color .2s !important;
-    box-shadow: 0 4px 24px rgba(0,0,0,.4) !important;
-}
-#input-bar > div:focus-within {
-    border-color: #58a6ff !important;
-}
-
-/* ── mic row (shown/hidden via JS) */
-#mic-row {
-    max-width: 780px !important;
-    margin: 0 auto 10px !important;
-    display: none;
-    background: #1c2128 !important;
-    border: 1px solid #30363d !important;
-    border-radius: 16px !important;
-    padding: 12px 16px !important;
-}
-#mic-row.open { display: block !important; }
-
-/* ── textbox ── */
-#qbox {
-    flex: 1 !important;
-    min-width: 0 !important;
-    border: none !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-}
-#qbox > div,
-#qbox .wrap {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-    padding: 0 !important;
-}
-#qbox label { display: none !important; }
-#qbox textarea {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    color: #e6edf3 !important;
-    font-family: 'Sora', sans-serif !important;
-    font-size: 1rem !important;
-    resize: none !important;
-    outline: none !important;
-    min-height: 28px !important;
-    max-height: 130px !important;
-    padding: 2px 0 !important;
-    line-height: 1.6 !important;
-}
-#qbox textarea::placeholder { color: #484f58 !important; }
-
-/* ── mic icon button (plain HTML button in the bar) ── */
-#mic-toggle-btn {
-    flex-shrink: 0 !important;
-    width: 42px !important; height: 42px !important;
-    border-radius: 50% !important;
-    background: transparent !important;
-    border: 1.5px solid #30363d !important;
-    color: #8b949e !important;
-    font-size: 17px !important;
-    cursor: pointer !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    transition: all .2s !important;
-    line-height: 1 !important;
-}
-#mic-toggle-btn:hover  { border-color: #58a6ff !important; color: #58a6ff !important; }
-#mic-toggle-btn.active { border-color: #3fb950 !important; color: #3fb950 !important; background: rgba(63,185,80,.08) !important; }
-
-/* ── send button ── */
-#send-btn {
-    flex-shrink: 0 !important;
-    width: 44px !important; height: 44px !important;
-    min-width: 44px !important;
-    border-radius: 50% !important;
-    background: linear-gradient(135deg,#238636,#1f6feb) !important;
-    color: #fff !important;
-    font-size: 17px !important;
-    border: none !important;
-    padding: 0 !important;
-    transition: opacity .2s, transform .12s !important;
-    box-shadow: 0 2px 10px rgba(31,111,235,.35) !important;
-}
-#send-btn:hover  { opacity: .82 !important; }
-#send-btn:active { transform: scale(.91) !important; }
 """
 
-# ---------------------------------------------------------------------------
-# JS
-# ---------------------------------------------------------------------------
-JS = """
-<script>
-function fillQuery(el) {
-    const ta = document.querySelector('#qbox textarea');
-    if (!ta) return;
-    ta.value = el.textContent.trim();
-    ta.dispatchEvent(new Event('input', {bubbles: true}));
-    ta.focus();
-}
+with gr.Blocks(css=CSS, title="Safeguarding Companion") as demo:
 
-function toggleMic() {
-    const row = document.getElementById('mic-row');
-    const btn = document.getElementById('mic-toggle-btn');
-    if (!row) return;
-    row.classList.toggle('open');
-    btn && btn.classList.toggle('active');
-}
+    gr.Markdown("# 🛡 Safeguarding Companion")
 
-// auto-scroll to bottom on new messages
-const _obs = new MutationObserver(() => window.scrollTo(0, document.body.scrollHeight));
-setTimeout(() => {
-    const el = document.getElementById('chat-display');
-    if (el) _obs.observe(el, { childList: true, subtree: true });
-}, 1200);
-</script>
-"""
-
-# ---------------------------------------------------------------------------
-# GRADIO BLOCKS
-# ---------------------------------------------------------------------------
-
-with gr.Blocks(title="Safeguarding Companion") as demo:
-
-    # ── TOP BAR
-    gr.HTML("""
-    <div class="top-bar">
-      <div class="top-logo">🛡️</div>
-      <div>
-        <div class="top-title">Safeguarding Companion</div>
-        <div class="top-sub">Makerere University · Policy Q&A</div>
-      </div>
-      <div class="online-badge">● Online</div>
-    </div>
-    """)
-
-    # ── CHAT DISPLAY
-    with gr.Column(elem_classes=["chat-scroll"]):
-        chat_display = gr.HTML(value=WELCOME_HTML, elem_id="chat-display")
-
-    # ── STATE
     history_state = gr.State([])
 
-    # ── INPUT BAR: textbox + plain HTML mic btn + send btn
-    #    gr.Audio lives BELOW the bar in a collapsible row (no Gradio component inside bar)
-    with gr.Row(elem_id="input-bar"):
-        text_input = gr.Textbox(
-            placeholder="Ask anything about university policies...",
-            show_label=False,
-            lines=1,
-            max_lines=5,
-            elem_id="qbox",
-            scale=9,
-            container=False,
+    chat_display = gr.HTML(render_chat([]), elem_id="chat")
+
+    with gr.Row(elem_id="bar"):
+
+        audio_input = gr.Audio(
+            sources=["microphone"],
+            type="filepath",
+            scale=1
         )
-        # plain HTML buttons — these render fine inside a gr.Row via gr.HTML
-        gr.HTML("""
-        <button id="mic-toggle-btn" onclick="toggleMic()" title="Voice input">🎙</button>
-        """)
-        send_btn = gr.Button("➤", elem_id="send-btn", scale=1, min_width=48)
 
-    # ── COLLAPSIBLE MIC ROW (hidden by default, shown when mic btn clicked)
-    gr.HTML('<div id="mic-row">')
-    audio_input = gr.Audio(
-        sources=["microphone"],
-        type="filepath",
-        label="🎙 Record your question, then press ➤ Send",
-        show_label=True,
-    )
-    gr.HTML('</div>')
+        text_input = gr.Textbox(
+            placeholder="Ask a question...",
+            label="",
+            elem_id="msg",
+            scale=6
+        )
 
-    # ── WIRE UP
+        send_btn = gr.Button("➤", elem_id="send", scale=1)
+
     send_btn.click(
-        fn=chat_fn,
+        chat_stream,
         inputs=[text_input, audio_input, history_state],
-        outputs=[history_state, chat_display, text_input],
+        outputs=[history_state, chat_display, text_input]
     )
+
     text_input.submit(
-        fn=chat_fn,
+        chat_stream,
         inputs=[text_input, audio_input, history_state],
-        outputs=[history_state, chat_display, text_input],
+        outputs=[history_state, chat_display, text_input]
     )
 
-    gr.HTML(JS)
-
-demo.launch(ssr_mode=False, css=CSS)
+demo.launch()
