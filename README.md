@@ -1,6 +1,6 @@
 
-
- Safeguarding Companion
+title:  Safeguarding Companion emoji: 🛡️ colorFrom: green colorTo: teal sdk: gradio sdk_version: "4.44.0" app_file: app.py pinned: false license: mit
+Safeguarding Companion
 A RAG-based chatbot for inclusive university safeguarding support at Makerere University.
 What it does
 Answers questions about university safeguarding policies, disability rights, sexual harassment reporting, and complaint procedures — grounded in official policy documents and written in plain English.
