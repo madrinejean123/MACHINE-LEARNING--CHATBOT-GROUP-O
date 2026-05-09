@@ -25,14 +25,18 @@ nltk.download("punkt_tab", quiet=True)
 # ---------------------------------------------------------------------------
 
 def text_to_speech(text):
-    """Convert answer text to MP3 using gTTS (free, no API)."""
+    """Convert answer text to MP3 using gTTS (requires internet on HF Spaces)."""
     try:
         from gtts import gTTS
         import tempfile
-        clean = re.sub(r'[•\*\-]', '', text)
-        clean = re.sub(r'\s+', ' ', clean).strip()
-        tts   = gTTS(text=clean, lang='en', slow=False)
-        tmp   = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+        # Strip markdown symbols before speaking
+        clean = re.sub(r"[•*#_]", "", text)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        # Keep to 800 chars so TTS is not too long
+        if len(clean) > 800:
+            clean = clean[:800] + "."
+        tts = gTTS(text=clean, lang="en", slow=False)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tts.save(tmp.name)
         return tmp.name
     except Exception as e:
@@ -980,6 +984,11 @@ if active_conv and not active_conv["messages"]:
                 st.session_state.suggested_query = suggestion
                 st.rerun()
 
+# ── Sidebar reopen button (top of main area) ─────────────────────────────────
+if st.button("☰  Menu / Settings", key="open_sidebar_btn"):
+    st.session_state.show_sidebar = not st.session_state.get("show_sidebar", True)
+    st.rerun()
+
 # ── Chat history ──────────────────────────────────────────────────────────────
 if active_conv:
     for msg in active_conv["messages"]:
@@ -987,37 +996,29 @@ if active_conv:
             st.markdown(msg["content"], unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# SIDEBAR TOGGLE — always-visible button to reopen sidebar
-# ---------------------------------------------------------------------------
-sidebar_toggle_html = """
-<button class="sidebar-toggle-btn"
-  onclick="var s=window.parent.document.querySelector('[data-testid=stSidebar]');if(s){s.style.display=s.style.display==='none'?'flex':'none';}"
-  title="Toggle sidebar">☰</button>
-"""
-st.markdown(sidebar_toggle_html, unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------------
-# CHAT INPUT  (text + voice mic)
+# VOICE INPUT SECTION
 # ---------------------------------------------------------------------------
 
-# Voice input widget — small mic above the text box
-st.markdown("**🎙️ Speak your question** (optional):")
-audio_input = st.audio_input("Record your question", key="mic_input", label_visibility="collapsed")
+with st.expander("🎙️ Speak your question instead of typing", expanded=False):
+    audio_input = st.audio_input("Record your question here", key="mic_input")
+    if audio_input is not None:
+        with st.spinner("🎙️ Transcribing your voice…"):
+            transcribed = transcribe_audio(audio_input)
+        if transcribed:
+            st.session_state.voice_input = transcribed
+            st.success(f"🎙️ Heard: *{transcribed}*")
+            if st.button("✅ Submit this voice question", key="submit_voice"):
+                st.session_state.suggested_query = transcribed
+                st.session_state.voice_input = None
+                st.rerun()
+        else:
+            st.warning("Could not understand the audio. Please try again or type your question.")
 
-# Transcribe if audio was recorded
-if audio_input is not None:
-    with st.spinner("🎙️ Transcribing your voice…"):
-        transcribed = transcribe_audio(audio_input)
-    if transcribed:
-        st.session_state.voice_input = transcribed
-        st.info(f"🎙️ Heard: *{transcribed}*")
+# ---------------------------------------------------------------------------
+# TEXT CHAT INPUT
+# ---------------------------------------------------------------------------
 
-user_input = st.chat_input("Or type your question here…")
-
-# Use voice input if no text typed
-if st.session_state.voice_input and not user_input:
-    user_input = st.session_state.voice_input
-    st.session_state.voice_input = None
+user_input = st.chat_input("Type your question here…")
 
 if st.session_state.suggested_query and not user_input:
     user_input = st.session_state.suggested_query
@@ -1042,13 +1043,11 @@ if user_input and active_conv:
             else:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
 
-                # Build raw context
                 raw_policy_text = "\n\n".join(
                     f"[Source: {nice_source_name(row['source_document'])}]\n{row['text'].strip()}"
                     for _, row in retrieved.iterrows()
                 )
 
-                # Try Groq and track whether it worked
                 groq_result = polish_with_groq(user_input, raw_policy_text)
                 if groq_result:
                     groq_used = True
@@ -1075,12 +1074,11 @@ if user_input and active_conv:
 
         st.markdown(answer)
 
-        # Voice output — read answer aloud
-        with st.spinner("🔊 Generating audio…"):
-            audio_path = text_to_speech(answer)
+        # Voice output — play answer aloud
+        audio_path = text_to_speech(answer)
         if audio_path:
-            st.audio(audio_path, format="audio/mp3", autoplay=False)
-            st.caption("🔊 Tap play to listen to this answer")
+            st.audio(audio_path, format="audio/mp3")
+            st.caption("🔊 Tap play to hear this answer read aloud")
 
         if sources:
             tags = "".join(
