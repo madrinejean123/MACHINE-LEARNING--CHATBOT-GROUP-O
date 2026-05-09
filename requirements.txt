@@ -1,8 +1,8 @@
 gradio==6.14.1
-transformers==4.46.0
-tokenizers>=0.20.0
-sentence-transformers==3.2.1
-huggingface_hub>=0.26.0
+transformers
+tokenizers
+sentence-transformers
+huggingface_hub
 torch
 scikit-learn
 PyPDF2
