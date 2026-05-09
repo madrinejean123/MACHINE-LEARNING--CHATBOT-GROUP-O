@@ -5,13 +5,14 @@ RAG-Based Policy Question-Answering System for Makerere University
 
 import os
 import re
-import tempfile
+import time
 import requests
 import numpy as np
 import pandas as pd
 import nltk
 import torch
-import gradio as gr
+import streamlit as st
+from datetime import datetime
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -34,8 +35,8 @@ GITHUB_PDF_URLS = [
 ]
 
 DATA_FOLDER          = "data"
-CHUNK_CSV            = "/home/user/app/policy_chunks.csv"
-EMBEDDINGS_NPY       = "/home/user/app/chunk_embeddings.npy"
+CHUNK_CSV            = "policy_chunks.csv"
+EMBEDDINGS_NPY       = "chunk_embeddings.npy"
 CHUNK_MAX_WORDS      = 150
 CHUNK_OVERLAP        = 1
 TOP_K                = 5
@@ -54,14 +55,22 @@ GREETINGS = {
 
 GREETING_RESPONSE = (
     "Hello! Welcome to the Safeguarding Companion.\n\n"
-    "I am here to help you understand university policies on safeguarding, "
+    "I'm here to help you understand university policies on safeguarding, "
     "disability rights, sexual harassment, and more — in plain, simple English.\n\n"
     "You can ask things like:\n"
-    "• How do I report harassment?\n"
-    "• What rights do students with disabilities have?\n"
-    "• How do I file a complaint?\n\n"
+    "- How do I report harassment?\n"
+    "- What rights do students with disabilities have?\n"
+    "- How do I file a complaint?\n\n"
     "What would you like to know?"
 )
+
+SUGGESTED_QUESTIONS = [
+    "How do I report harassment?",
+    "Rights for students with disabilities",
+    "How do I file a complaint?",
+    "What is the HIV/AIDS policy?",
+    "Support for persons with disabilities",
+]
 
 # ---------------------------------------------------------------------------
 # DOCUMENT PROCESSING
@@ -81,7 +90,6 @@ def download_pdfs(urls, folder):
             response.raise_for_status()
             with open(filepath, "wb") as f:
                 f.write(response.content)
-            print(f"Downloaded: {filename}")
             paths.append(filepath)
         except Exception as e:
             print(f"Could not download {filename}: {e}")
@@ -89,7 +97,6 @@ def download_pdfs(urls, folder):
 
 
 def extract_text_from_pdf(filepath):
-    """Try PyPDF2 first; fall back to OCR via pdf2image + pytesseract."""
     import PyPDF2
     text = ""
     try:
@@ -104,26 +111,22 @@ def extract_text_from_pdf(filepath):
     except Exception as e:
         print(f"PyPDF2 failed for {os.path.basename(filepath)}: {e}")
 
-    # OCR fallback — requires poppler (packages.txt) and tesseract (packages.txt)
     try:
         from pdf2image import convert_from_path
         import pytesseract
-        print(f"  → Trying OCR for {os.path.basename(filepath)} ...")
         images = convert_from_path(filepath, dpi=200)
         ocr_text = ""
         for img in images:
             ocr_text += pytesseract.image_to_string(img, lang="eng") + " "
         if ocr_text.strip():
-            print(f"  → OCR succeeded ({len(ocr_text.split())} words)")
             return ocr_text.strip()
     except Exception as e:
-        print(f"  → OCR failed for {os.path.basename(filepath)}: {e}")
+        print(f"OCR failed for {os.path.basename(filepath)}: {e}")
 
     return ""
 
 
 def clean_text(text):
-    """Remove artefacts, fix hyphenation, normalise whitespace."""
     fixes = {
         "har- assment": "harassment",
         "dis- ability": "disability",
@@ -132,11 +135,9 @@ def clean_text(text):
     }
     for broken, fixed in fixes.items():
         text = text.replace(broken, fixed)
-
-    # remove bullet/numbering artefacts like "a)", "b)", "1.", "i."
-    text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)        # a) b) c)
-    text = re.sub(r"\b\d+\.\s*", "", text)              # 1. 2. 3.
-    text = re.sub(r"\b[ivxlIVXL]+\.\s*", "", text)      # i. ii. iii.
+    text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)
+    text = re.sub(r"\b\d+\.\s*", "", text)
+    text = re.sub(r"\b[ivxlIVXL]+\.\s*", "", text)
     text = text.replace("\n", " ")
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"[^a-zA-Z0-9.,;:()\-\/ ]", "", text)
@@ -167,14 +168,11 @@ def build_dataset(folder):
     records = []
     pdf_files = [f for f in os.listdir(folder) if f.endswith(".pdf")]
     if not pdf_files:
-        print("No PDF files found.")
         return pd.DataFrame()
     for filename in pdf_files:
         filepath = os.path.join(folder, filename)
-        print(f"Processing: {filename}")
         raw     = extract_text_from_pdf(filepath)
         if not raw:
-            print(f"  ⚠ No text extracted from {filename}, skipping.")
             continue
         cleaned = clean_text(raw)
         chunks  = chunk_text(cleaned)
@@ -231,17 +229,9 @@ def is_greeting(text):
 
 
 def clean_answer(text):
-    """
-    Remove leftover policy numbering artefacts and tidy up the model output.
-    e.g.  '* b) Students must...' → 'Students must...'
-    """
-    # strip leading *, -, bullet chars
     text = re.sub(r"^[\*\-•]\s*", "", text, flags=re.MULTILINE)
-    # strip lettered sub-items like "a)" "b)" at start of line or inline
     text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)
-    # strip numbered items
     text = re.sub(r"\b\d+[\.\)]\s*", "", text)
-    # collapse extra whitespace
     text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
 
@@ -266,17 +256,17 @@ def generate_answer(query, retrieved, tokenizer, model, device):
     context = "\n\n".join(context_parts)
 
     prompt = (
-        "You are a friendly university support assistant. "
-        "A student asked: \"{query}\"\n\n"
-        "Using the policy excerpts below, write a clear, helpful answer "
-        "in 3 to 5 short sentences. "
-        "Do NOT copy sentences from the policy word-for-word. "
-        "Do NOT use bullet letters like a) b) or numbers like 1. 2. "
-        "Write naturally, as if explaining to a friend. "
-        "Use plain English — no legal jargon.\n\n"
+        f"You are a friendly university support assistant. "
+        f"A student asked: \"{query}\"\n\n"
+        f"Using the policy excerpts below, write a clear, helpful answer "
+        f"in 3 to 5 short sentences. "
+        f"Do NOT copy sentences from the policy word-for-word. "
+        f"Do NOT use bullet letters like a) b) or numbers like 1. 2. "
+        f"Write naturally, as if explaining to a friend. "
+        f"Use plain English — no legal jargon.\n\n"
         f"Policy excerpts:\n{context}\n\n"
         f"Question: {query}\n\n"
-        "Helpful answer:"
+        f"Helpful answer:"
     )
 
     inputs = tokenizer(
@@ -308,19 +298,6 @@ def generate_answer(query, retrieved, tokenizer, model, device):
     return answer
 
 
-def format_response(answer):
-    """Turn the answer into clean readable sentences."""
-    answer = clean_answer(answer)
-    # if already has newlines leave it
-    if "\n" in answer:
-        return answer
-    # split on full stops into short sentences
-    sentences = [s.strip() for s in answer.split(".") if len(s.strip()) > 8]
-    if not sentences:
-        return answer
-    return " ".join(s + "." for s in sentences)
-
-
 def apply_simplified_language(text):
     replacements = {
         "pursuant to":    "according to",
@@ -337,256 +314,411 @@ def apply_simplified_language(text):
     return text
 
 
-def transcribe_audio(audio_path):
-    try:
-        result = transcriber(audio_path)
-        return result["text"].strip()
-    except Exception as e:
-        print(f"Transcription error: {e}")
-        return ""
+def format_response(answer):
+    answer = clean_answer(answer)
+    if "\n" in answer:
+        return answer
+    sentences = [s.strip() for s in answer.split(".") if len(s.strip()) > 8]
+    if not sentences:
+        return answer
+    return " ".join(s + "." for s in sentences)
+
+
+def nice_source_name(raw):
+    return raw.replace(".pdf", "").replace("-", " ").replace("_", " ").strip()
+
+
+def get_chat_title(messages):
+    """Generate a short title from the first user message."""
+    for msg in messages:
+        if msg["role"] == "user":
+            text = msg["content"][:50]
+            return text if len(msg["content"]) <= 50 else text + "…"
+    return "New conversation"
 
 
 # ---------------------------------------------------------------------------
-# STARTUP
+# LOAD MODELS
 # ---------------------------------------------------------------------------
 
-print("Downloading policy documents...")
-download_pdfs(GITHUB_PDF_URLS, DATA_FOLDER)
+@st.cache_resource(show_spinner=False)
+def load_everything():
+    download_pdfs(GITHUB_PDF_URLS, DATA_FOLDER)
 
-if os.path.exists(CHUNK_CSV) and os.path.exists(EMBEDDINGS_NPY):
-    print("Loading cached chunks and embeddings...")
-    df         = pd.read_csv(CHUNK_CSV)
-    embeddings = np.load(EMBEDDINGS_NPY)
-else:
-    print("Building document dataset...")
-    df = build_dataset(DATA_FOLDER)
-    if df.empty:
-        raise RuntimeError("No documents could be processed. Check PDF URLs and poppler install.")
-    df.to_csv(CHUNK_CSV, index=False)
-    print("Generating embeddings...")
-    _tmp_model = SentenceTransformer("all-MiniLM-L6-v2")
-    embeddings = _tmp_model.encode(
-        df["text"].astype(str).tolist(),
-        show_progress_bar=True,
-        batch_size=32,
-        normalize_embeddings=True,
-    )
-    np.save(EMBEDDINGS_NPY, embeddings)
-    print(f"Embeddings saved. Shape: {embeddings.shape}")
+    if os.path.exists(CHUNK_CSV) and os.path.exists(EMBEDDINGS_NPY):
+        df         = pd.read_csv(CHUNK_CSV)
+        embeddings = np.load(EMBEDDINGS_NPY)
+    else:
+        df = build_dataset(DATA_FOLDER)
+        if df.empty:
+            raise RuntimeError("No documents could be processed.")
+        df.to_csv(CHUNK_CSV, index=False)
+        tmp = SentenceTransformer("all-MiniLM-L6-v2")
+        embeddings = tmp.encode(
+            df["text"].astype(str).tolist(),
+            show_progress_bar=False,
+            batch_size=32,
+            normalize_embeddings=True,
+        )
+        np.save(EMBEDDINGS_NPY, embeddings)
 
-print("Loading embedding model...")
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    emb_model   = SentenceTransformer("all-MiniLM-L6-v2")
+    tokenizer   = AutoTokenizer.from_pretrained("google/flan-t5-base")
+    gen_model   = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
+    device      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    gen_model.to(device)
+    transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-tiny")
 
-print("Loading generation model...")
-gen_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-gen_model     = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
-device        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-gen_model.to(device)
+    return df, embeddings, emb_model, tokenizer, gen_model, device, transcriber
 
-print("Loading Whisper for voice transcription...")
-transcriber = pipeline(
-    "automatic-speech-recognition",
-    model="openai/whisper-tiny",
+
+# ---------------------------------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="Safeguarding Companion",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-print("All models ready.")
-
-
 # ---------------------------------------------------------------------------
-# CHAT LOGIC
+# GLOBAL CSS
 # ---------------------------------------------------------------------------
 
-print("All models ready.")
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
-# ---------------------------------------------------------------------------
-# MEMORY
-# ---------------------------------------------------------------------------
+/* ── Reset & base ── */
+html, body, [class*="css"] {
+    font-family: 'Sora', sans-serif !important;
+    background-color: #0d1117 !important;
+    color: #e6edf3 !important;
+}
+#MainMenu, footer, header { visibility: hidden; }
 
-conversation_history = {}
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background-color: #161b22 !important;
+    border-right: 1px solid #21262d !important;
+}
+[data-testid="stSidebar"] * { color: #c9d1d9 !important; }
 
-def get_history(session_id="default"):
-    return conversation_history.get(session_id, [])
+.sidebar-logo {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 0 20px;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 16px;
+}
+.sidebar-logo-icon {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: linear-gradient(135deg,#238636,#1f6feb);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+}
+.sidebar-logo-text { font-size: 0.9rem; font-weight: 600; color: #e6edf3 !important; }
+.sidebar-logo-sub  { font-size: 0.65rem; color: #8b949e !important; }
 
-def update_history(session_id, role, message):
-    if session_id not in conversation_history:
-        conversation_history[session_id] = []
-    conversation_history[session_id].append((role, message))
-    conversation_history[session_id] = conversation_history[session_id][-12:]
-
-
-# ---------------------------------------------------------------------------
-# STREAM CHAT (CHATGPT STYLE TYPING)
-# ---------------------------------------------------------------------------
-
-def chat_stream(user_msg, audio_input, history_state):
-
-    if history_state is None:
-        history_state = []
-
-    # voice input
-    if audio_input:
-        user_msg = transcribe_audio(audio_input)
-
-    if not user_msg:
-        yield history_state, render_chat(history_state), ""
-        return
-
-    # save user message
-    history_state.append(("user", user_msg))
-    update_history("default", "user", user_msg)
-
-    yield history_state, render_chat(history_state), ""
-
-    # retrieval + answer
-    retrieved = retrieve_top_k(user_msg, embedding_model, embeddings, df)
-    answer = generate_answer(user_msg, retrieved, gen_tokenizer, gen_model, device)
-    answer = apply_simplified_language(answer)
-    answer = format_response(answer)
-
-    # STREAMING EFFECT
-    streamed = ""
-    for word in answer.split():
-        streamed += word + " "
-        temp = history_state + [("bot", streamed)]
-        yield temp, render_chat(temp), ""
-
-    history_state.append(("bot", answer))
-    update_history("default", "bot", answer)
-
-
-# ---------------------------------------------------------------------------
-# SIMPLE CHAT RENDER (CLEAN CHATGPT STYLE)
-# ---------------------------------------------------------------------------
-
-def render_chat(history):
-    if not history:
-        return """
-        <div style='text-align:center;color:#8b949e;margin-top:40px;'>
-            Ask a question to begin
-        </div>
-        """
-
-    html = ""
-
-    for role, msg in history:
-        msg = msg.replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-
-        if role == "user":
-            html += f"""
-            <div style="display:flex;justify-content:flex-end;margin:10px;">
-              <div style="
-                background:linear-gradient(135deg,#1f6feb,#388bfd);
-                color:white;padding:12px 14px;
-                border-radius:18px;
-                max-width:70%;
-                font-size:0.95rem;">
-                {msg}
-              </div>
-            </div>
-            """
-        else:
-            html += f"""
-            <div style="display:flex;justify-content:flex-start;margin:10px;">
-              <div style="
-                background:#161b22;
-                border:1px solid #30363d;
-                color:#c9d1d9;
-                padding:12px 14px;
-                border-radius:18px;
-                max-width:70%;
-                font-size:0.95rem;">
-                {msg}
-              </div>
-            </div>
-            """
-
-    return html
-
-
-# ---------------------------------------------------------------------------
-# GRADIO UI (CLEAN CHATGPT STYLE)
-# ---------------------------------------------------------------------------
-
-import gradio as gr
-
-CSS = """
-body {
-    background:#0d1117 !important;
-    color:#e6edf3 !important;
-    font-family: system-ui;
+.sidebar-section-label {
+    font-size: 0.65rem; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: #8b949e !important;
+    padding: 12px 0 6px; margin-bottom: 2px;
 }
 
-/* chat container */
-#chat {
-    height:75vh;
-    overflow-y:auto;
-    padding:20px;
+.history-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-radius: 10px; cursor: pointer;
+    border: 1px solid transparent; margin-bottom: 3px;
+    transition: background .15s;
+    background: transparent;
+}
+.history-item:hover { background: #1c2128; border-color: #30363d; }
+.history-item.active { background: #1c2128; border-color: #1f6feb44; }
+.history-item-icon  { font-size: 0.85rem; flex-shrink: 0; }
+.history-item-text  { font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c9d1d9 !important; }
+.history-item-time  { font-size: 0.62rem; color: #8b949e !important; margin-top: 1px; }
+
+.new-chat-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 10px; border-radius: 10px;
+    background: linear-gradient(135deg,#238636,#1f6feb);
+    color: #fff !important; font-size: 0.85rem; font-weight: 600;
+    border: none; cursor: pointer; margin-bottom: 20px;
+    transition: opacity .2s;
+}
+.new-chat-btn:hover { opacity: .88; }
+
+/* ── Main area ── */
+.main-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 0 18px;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 24px;
+}
+.main-logo {
+    width: 42px; height: 42px; border-radius: 12px;
+    background: linear-gradient(135deg,#238636,#1f6feb);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; flex-shrink: 0;
+}
+.main-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.15rem; color: #e6edf3;
+}
+.main-sub { font-size: 0.7rem; color: #8b949e; margin-top: 2px; }
+.online-badge {
+    margin-left: auto; font-size: 0.68rem; padding: 4px 12px;
+    border-radius: 20px; background: rgba(35,134,54,0.15);
+    color: #3fb950; border: 1px solid rgba(63,185,80,0.3);
 }
 
-/* bottom bar */
-#bar {
-    position:fixed;
-    bottom:0;
-    width:100%;
-    display:flex;
-    gap:10px;
-    padding:14px;
-    background:#161b22;
-    border-top:1px solid #30363d;
+/* ── Welcome ── */
+.welcome-card { text-align: center; padding: 40px 16px 28px; }
+.welcome-card h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.7rem; color: #e6edf3; margin-bottom: 12px;
+}
+.welcome-card p {
+    color: #8b949e; font-size: 0.88rem;
+    line-height: 1.8; max-width: 500px; margin: 0 auto;
+}
+.pill-row {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    justify-content: center; margin-top: 24px;
+}
+.pill {
+    font-size: 0.78rem; padding: 9px 18px; border-radius: 20px;
+    background: #161b22; border: 1px solid #30363d; color: #8b949e;
+    cursor: pointer; transition: border-color .2s, color .2s;
+}
+.pill:hover { border-color: #58a6ff; color: #58a6ff; }
+
+/* ── Source tags ── */
+.src-tag {
+    display: inline-block; margin: 4px 4px 0 0;
+    font-size: 0.68rem; padding: 3px 10px; border-radius: 20px;
+    background: rgba(31,111,235,.12); color: #58a6ff;
+    border: 1px solid rgba(88,166,255,.2);
 }
 
-/* textbox */
-#msg textarea {
-    border-radius:20px !important;
-    padding:12px !important;
-    font-size:1rem !important;
+/* ── Chat input ── */
+[data-testid="stChatInput"] textarea {
+    background: #1c2128 !important;
+    border: 1.5px solid #30363d !important;
+    border-radius: 28px !important;
+    color: #e6edf3 !important;
+    font-family: 'Sora', sans-serif !important;
+    font-size: 0.95rem !important;
+    padding: 14px 20px !important;
+}
+[data-testid="stChatInput"] textarea:focus {
+    border-color: #58a6ff !important;
+    box-shadow: 0 0 0 3px rgba(88,166,255,.1) !important;
+}
+[data-testid="stChatInput"] button {
+    background: linear-gradient(135deg,#238636,#1f6feb) !important;
+    border-radius: 50% !important; border: none !important;
 }
 
-/* buttons */
-#send {
-    width:48px;
-    border-radius:50%;
-    background:#238636;
-    color:white;
-    font-size:18px;
+/* ── Message bubbles ── */
+[data-testid="stChatMessage"] {
+    background: transparent !important;
+    border: none !important;
+    padding: 4px 0 !important;
 }
-"""
 
-with gr.Blocks(css=CSS, title="Safeguarding Companion") as demo:
+/* ── Divider ── */
+hr { border-color: #21262d !important; }
 
-    gr.Markdown("# 🛡 Safeguarding Companion")
+/* ── Spinner ── */
+[data-testid="stSpinner"] { color: #58a6ff !important; }
+</style>
+""", unsafe_allow_html=True)
 
-    history_state = gr.State([])
 
-    chat_display = gr.HTML(render_chat([]), elem_id="chat")
+# ---------------------------------------------------------------------------
+# SESSION STATE INIT
+# ---------------------------------------------------------------------------
 
-    with gr.Row(elem_id="bar"):
+if "conversations" not in st.session_state:
+    # List of {id, title, messages, timestamp}
+    st.session_state.conversations = []
 
-        audio_input = gr.Audio(
-            sources=["microphone"],
-            type="filepath",
-            scale=1
-        )
+if "active_conv_id" not in st.session_state:
+    st.session_state.active_conv_id = None
 
-        text_input = gr.Textbox(
-            placeholder="Ask a question...",
-            label="",
-            elem_id="msg",
-            scale=6
-        )
+if "pending_input" not in st.session_state:
+    st.session_state.pending_input = None
 
-        send_btn = gr.Button("➤", elem_id="send", scale=1)
 
-    send_btn.click(
-        chat_stream,
-        inputs=[text_input, audio_input, history_state],
-        outputs=[history_state, chat_display, text_input]
-    )
+def new_conversation():
+    conv_id = str(int(time.time() * 1000))
+    st.session_state.conversations.insert(0, {
+        "id":        conv_id,
+        "title":     "New conversation",
+        "messages":  [],
+        "timestamp": datetime.now().strftime("%H:%M"),
+    })
+    st.session_state.active_conv_id = conv_id
 
-    text_input.submit(
-        chat_stream,
-        inputs=[text_input, audio_input, history_state],
-        outputs=[history_state, chat_display, text_input]
-    )
 
-demo.launch()
+def get_active_conv():
+    for conv in st.session_state.conversations:
+        if conv["id"] == st.session_state.active_conv_id:
+            return conv
+    return None
+
+
+# Make sure there's always at least one conversation
+if not st.session_state.conversations:
+    new_conversation()
+if st.session_state.active_conv_id is None and st.session_state.conversations:
+    st.session_state.active_conv_id = st.session_state.conversations[0]["id"]
+
+
+# ---------------------------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.markdown("""
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">🛡️</div>
+      <div>
+        <div class="sidebar-logo-text">Safeguarding</div>
+        <div class="sidebar-logo-sub">Makerere University</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # New chat button
+    if st.button("✦  New conversation", use_container_width=True, key="new_chat_btn"):
+        new_conversation()
+        st.rerun()
+
+    st.markdown('<div class="sidebar-section-label">Recent chats</div>', unsafe_allow_html=True)
+
+    if not st.session_state.conversations:
+        st.markdown('<div style="font-size:0.78rem;color:#8b949e;padding:8px 0;">No conversations yet.</div>', unsafe_allow_html=True)
+    else:
+        for conv in st.session_state.conversations:
+            is_active = conv["id"] == st.session_state.active_conv_id
+            active_cls = "active" if is_active else ""
+            label = conv["title"]
+            ts    = conv["timestamp"]
+
+            clicked = st.button(
+                f"💬  {label}",
+                key=f"conv_{conv['id']}",
+                use_container_width=True,
+            )
+            if clicked:
+                st.session_state.active_conv_id = conv["id"]
+                st.rerun()
+
+    st.markdown("---")
+    st.markdown('<div style="font-size:0.68rem;color:#8b949e;line-height:1.6;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# MAIN CONTENT
+# ---------------------------------------------------------------------------
+
+# Header
+st.markdown("""
+<div class="main-header">
+  <div class="main-logo">🛡️</div>
+  <div>
+    <div class="main-title">Safeguarding Companion</div>
+    <div class="main-sub">Makerere University · Policy Q&A</div>
+  </div>
+  <div class="online-badge">● Online</div>
+</div>
+""", unsafe_allow_html=True)
+
+# Load models
+with st.spinner("Loading policy documents and models — first run takes a minute…"):
+    df, embeddings, emb_model, gen_tokenizer, gen_model, device, transcriber = load_everything()
+
+# Get active conversation
+active_conv = get_active_conv()
+
+# Welcome screen (no messages yet)
+if active_conv and not active_conv["messages"]:
+    st.markdown("""
+    <div class="welcome-card">
+      <div style="font-size:3.2rem;margin-bottom:14px">🛡️</div>
+      <h2>How can I help you today?</h2>
+      <p>Ask me anything about Makerere University's safeguarding policies,
+      disability rights, sexual harassment procedures, and student protections.
+      All answers come from official policy documents.</p>
+      <div class="pill-row">
+        <span class="pill">How do I report harassment?</span>
+        <span class="pill">Rights for students with disabilities</span>
+        <span class="pill">How do I file a complaint?</span>
+        <span class="pill">What is the HIV/AIDS policy?</span>
+        <span class="pill">Support for persons with disabilities</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Render chat history for active conversation
+if active_conv:
+    for msg in active_conv["messages"]:
+        with st.chat_message(msg["role"], avatar="🛡️" if msg["role"] == "assistant" else "🧑"):
+            st.markdown(msg["content"], unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# CHAT INPUT
+# ---------------------------------------------------------------------------
+
+user_input = st.chat_input("Ask anything about university policies…")
+
+if user_input and active_conv:
+    # Show user message
+    with st.chat_message("user", avatar="🧑"):
+        st.markdown(user_input)
+
+    active_conv["messages"].append({"role": "user", "content": user_input})
+
+    # Update conversation title from first user message
+    if active_conv["title"] == "New conversation":
+        active_conv["title"] = user_input[:45] + ("…" if len(user_input) > 45 else "")
+
+    # Generate response
+    with st.chat_message("assistant", avatar="🛡️"):
+        with st.spinner("Searching policy documents…"):
+
+            if is_greeting(user_input):
+                answer  = GREETING_RESPONSE
+                sources = []
+            else:
+                retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
+                raw       = generate_answer(user_input, retrieved, gen_tokenizer, gen_model, device)
+                raw       = apply_simplified_language(raw)
+                answer    = format_response(raw)
+                sources   = (
+                    list(retrieved["source_document"].unique())
+                    if not retrieved.empty else []
+                )
+
+        st.markdown(answer)
+
+        if sources:
+            tags = "".join(
+                f'<span class="src-tag">📄 {nice_source_name(s)}</span>'
+                for s in sources
+            )
+            st.markdown(tags, unsafe_allow_html=True)
+
+        full_content = answer
+        if sources:
+            full_content += "<br>" + "".join(
+                f'<span class="src-tag">📄 {nice_source_name(s)}</span>'
+                for s in sources
+            )
+
+    active_conv["messages"].append({"role": "assistant", "content": full_content})
+    st.rerun()
