@@ -191,6 +191,47 @@ def build_dataset(folder):
 # RETRIEVAL
 # ---------------------------------------------------------------------------
 
+# Maps user intent keywords → extra search terms that match policy language
+QUERY_EXPANSIONS = {
+    # harassment
+    "harass":    "report complaint procedure steps lodge file officer committee investigation",
+    "assault":   "report complaint procedure steps lodge file officer committee investigation",
+    "abuse":     "report complaint procedure steps lodge file officer committee investigation",
+    "harassed":  "report complaint procedure steps lodge file officer committee investigation",
+    # disability
+    "disabilit": "rights accommodation access support services equal opportunity",
+    "disabled":  "rights accommodation access support services equal opportunity",
+    "pwd":       "rights accommodation access support services equal opportunity",
+    # hiv aids
+    "hiv":       "rights confidentiality treatment support non-discrimination policy",
+    "aids":      "rights confidentiality treatment support non-discrimination policy",
+    # complaint / reporting
+    "report":    "complaint procedure steps lodge file officer committee investigation",
+    "complain":  "complaint procedure steps lodge file officer committee investigation",
+    "file":      "complaint procedure steps lodge file officer committee investigation",
+    # rights general
+    "right":     "rights responsibilities protection policy entitlement",
+    "protect":   "safeguarding protection rights policy procedure",
+}
+
+
+def expand_query(query):
+    """
+    Expand the user query with policy-language terms so the embeddings
+    match procedure/steps chunks instead of just definition chunks.
+    """
+    q_lower = query.lower()
+    extras  = set()
+    for trigger, expansion in QUERY_EXPANSIONS.items():
+        if trigger in q_lower:
+            extras.update(expansion.split())
+    if extras:
+        expanded = query + " " + " ".join(extras)
+        print(f"Query expanded: {expanded[:120]}")
+        return expanded
+    return query
+
+
 def keyword_filter(df, query):
     keywords = [
         w.lower() for w in re.findall(r"\b\w+\b", query)
@@ -204,17 +245,41 @@ def keyword_filter(df, query):
 
 
 def retrieve_top_k(query, model, embeddings, df, k=TOP_K, threshold=SIMILARITY_THRESHOLD):
+    # Expand query to match policy procedure language
+    expanded = expand_query(query)
+
+    # Keyword filter on original query keywords (keeps it relevant)
     filtered = keyword_filter(df, query)
     indices  = filtered.index.tolist()
     f_embeds = embeddings[indices]
-    q_vec    = model.encode([query], normalize_embeddings=True)
-    scores   = cosine_similarity(q_vec, f_embeds)[0]
+
+    # Encode the EXPANDED query for semantic similarity
+    q_vec  = model.encode([expanded], normalize_embeddings=True)
+    scores = cosine_similarity(q_vec, f_embeds)[0]
+
     sorted_i = np.argsort(scores)[::-1]
     top_i    = [i for i in sorted_i[:k] if scores[i] >= threshold]
     if not top_i:
-        top_i = sorted_i[:3]
+        top_i = sorted_i[:5]   # grab top 5 even if below threshold
+
     results = filtered.iloc[top_i].copy()
     results["similarity_score"] = scores[top_i]
+
+    # Boost chunks that contain procedure/action words — push them to the top
+    ACTION_WORDS = ["report", "complain", "lodge", "file", "contact", "procedure",
+                    "steps", "committee", "officer", "directorate", "submit", "notify",
+                    "support", "rights", "entitled", "must", "shall", "access"]
+
+    def action_score(text):
+        t = str(text).lower()
+        return sum(1 for w in ACTION_WORDS if w in t)
+
+    results["action_boost"] = results["text"].apply(action_score)
+    results = results.sort_values(
+        by=["action_boost", "similarity_score"],
+        ascending=[False, False]
+    ).drop(columns=["action_boost"])
+
     return results
 
 
@@ -228,77 +293,107 @@ def is_greeting(text):
     return cleaned in GREETINGS or (len(words) <= 3 and words[0] in GREETINGS)
 
 
-def clean_answer(text):
-    text = re.sub(r"^[\*\-•]\s*", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)
-    text = re.sub(r"\b\d+[\.\)]\s*", "", text)
-    text = re.sub(r"\s{2,}", " ", text)
-    return text.strip()
+def clean_sentence(s):
+    """Clean up a single policy sentence for display."""
+    # Remove letter prefixes like (a) (b) f) g) etc
+    s = re.sub(r'^\s*[\(\[]?[a-zA-Z][\)\]]\s*', '', s)
+    # Remove number prefixes like 1. 2. 3.
+    s = re.sub(r'^\s*\d+[\.\)]\s*', '', s)
+    # Fix broken hyphenated words e.g. "unsur- ed" → "unsured"
+    s = re.sub(r'(\w+)-\s+(\w+)', r'\1\2', s)
+    # Collapse extra whitespace
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip()
 
 
-def generate_answer(query, retrieved, tokenizer, model, device):
-    if retrieved.empty:
+def split_into_sentences(text):
+    """Split a chunk of text into clean individual sentences."""
+    # Split on sentence boundaries
+    raw = re.split(r'(?<=[.!?])\s+', text)
+    sentences = []
+    for s in raw:
+        s = clean_sentence(s)
+        if len(s.split()) >= 5:   # skip very short fragments
+            sentences.append(s)
+    return sentences
+
+
+def format_chunks_as_bullets(retrieved):
+    """
+    Format retrieved chunks exactly like the notebook output:
+    - Intro line
+    - Bullet points for each sentence
+    - Source label per document section
+    Skips definition-only chunks, prioritises procedure/action chunks.
+    """
+    ACTION_WORDS = {
+        "report", "lodge", "file", "contact", "collect", "document",
+        "record", "seek", "notify", "submit", "communicate", "keep",
+        "note", "familiarize", "request", "support", "access", "entitled",
+        "rights", "must", "should", "procedure", "steps", "committee",
+        "directorate", "officer", "complaint", "evidence", "witness",
+    }
+
+    grouped = {}
+    for _, row in retrieved.iterrows():
+        src = nice_source_name(row["source_document"])
+        grouped.setdefault(src, []).append(row["text"].strip())
+
+    parts = []
+    total_bullets = 0
+
+    for src, texts in grouped.items():
+        combined   = " ".join(texts)
+        sentences  = split_into_sentences(combined)
+
+        # Score each sentence — prefer action/procedure sentences
+        scored = []
+        for s in sentences:
+            s_lower = s.lower()
+            score   = sum(1 for w in ACTION_WORDS if w in s_lower)
+            scored.append((score, s))
+
+        # Sort: action sentences first, then the rest
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # Take up to 10 sentences per source, minimum score 0 (include all)
+        top_sentences = [s for _, s in scored[:10]]
+        # Re-sort back into reading order by original position
+        order = {s: i for i, s in enumerate(sentences)}
+        top_sentences.sort(key=lambda s: order.get(s, 999))
+
+        if not top_sentences:
+            continue
+
+        parts.append(f"\n**📋 {src}**\n")
+        for s in top_sentences:
+            # Ensure sentence ends with punctuation
+            if not s.endswith(('.', '!', '?')):
+                s += '.'
+            parts.append(f"• {s}")
+            total_bullets += 1
+
+    if total_bullets == 0:
+        return (
+            "I found related policy sections but could not extract clear steps. "
+            "Please contact the **Directorate of Gender Mainstreaming** directly for guidance."
+        )
+
+    return "\n".join(parts)
+
+
+def generate_answer(query, retrieved):
+    """
+    Directly format retrieved policy chunks into a clean, readable answer.
+    No AI generation — just the actual policy text, beautifully structured.
+    """
+    if retrieved is None or retrieved.empty:
         return (
             "I could not find specific information about that in the policy documents. "
-            "Please try rephrasing your question, or contact the Gender Mainstreaming "
-            "Directorate directly for assistance."
+            "Please try rephrasing your question, or contact the **Gender Mainstreaming "
+            "Directorate** directly for assistance."
         )
-
-    # Use top 5 chunks (up from 3) and keep more text per chunk
-    context_parts = []
-    for _, row in retrieved.head(5).iterrows():
-        source = (
-            row["source_document"]
-            .replace(".pdf", "")
-            .replace("-", " ")
-            .replace("_", " ")
-        )
-        context_parts.append(f"[{source}]: {row['text']}")
-    context = "\n\n".join(context_parts)
-
-    # Stronger, more detailed prompt
-    prompt = (
-        f"You are a helpful university safeguarding advisor at Makerere University. "
-        f"A student asked: \"{query}\"\n\n"
-        f"Using ONLY the policy excerpts below, give a thorough and practical answer. "
-        f"Your answer MUST:\n"
-        f"- Explain what the policy says about this topic in detail\n"
-        f"- Mention specific steps, rights, or procedures the student can take\n"
-        f"- Name any relevant office, committee, or contact point mentioned in the policy\n"
-        f"- Be written in plain, friendly English — no legal jargon\n"
-        f"- Be at least 5 sentences long\n\n"
-        f"Policy excerpts:\n{context}\n\n"
-        f"Question: {query}\n\n"
-        f"Detailed, practical answer:"
-    )
-
-    inputs = tokenizer(
-        prompt,
-        max_length=1024,   # up from 600 — fit more context
-        truncation=True,
-        return_tensors="pt",
-    ).to(device)
-
-    outputs = model.generate(
-        input_ids=inputs.input_ids,
-        attention_mask=inputs.attention_mask,
-        max_new_tokens=350,        # up from 220 — allow longer answers
-        num_beams=5,               # slightly wider beam search
-        early_stopping=True,
-        no_repeat_ngram_size=4,    # reduce repetition
-        length_penalty=1.5,        # reward longer, fuller answers
-        do_sample=False,
-    )
-
-    answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    answer = clean_answer(answer)
-
-    # If the model still gives a short answer, fall back to showing the
-    # raw policy text directly — always better than a one-liner
-    if len(answer.split()) < 15:
-        return format_fallback(retrieved)
-
-    return answer
+    return format_chunks_as_bullets(retrieved)
 
 
 def apply_simplified_language(text):
@@ -311,6 +406,8 @@ def apply_simplified_language(text):
         "shall":          "must",
         "whilst":         "while",
         "herein":         "in this document",
+        "hereunder":      "below",
+        "aforesaid":      "mentioned",
     }
     for formal, plain in replacements.items():
         text = text.replace(formal, plain)
@@ -318,90 +415,12 @@ def apply_simplified_language(text):
 
 
 def format_response(answer):
-    """
-    Turn a wall-of-text answer into clean, readable output.
-    - Detects sentences that are list items (rights, steps, procedures)
-      and formats them as numbered points under a heading.
-    - Intro/conclusion sentences stay as normal prose.
-    - Works on both the model's generated text AND the fallback raw policy text.
-    """
-    answer = clean_answer(answer)
-
-    # ── Split into sentences ──────────────────────────────────────────────
-    raw_sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', answer) if len(s.strip()) > 8]
-    if not raw_sentences:
-        return answer
-
-    # ── Patterns that signal a list item (right, step, procedure) ────────
-    LIST_TRIGGERS = re.compile(
-        r'^(every student|students (with|living)|the university (must|will|shall)|'
-        r'you (have|can|must|are)|equal access|reasonable|appropriate|confidential|'
-        r'access to|you (have the right|should|may)|report|contact|inform|file|seek|'
-        r'the (policy|committee|directorate|office)|persons with|pwds|staff|'
-        r'protection|support|accommodation|right to|they (must|will|shall))',
-        re.IGNORECASE,
-    )
-
-    intro_sentences  = []
-    list_sentences   = []
-    closing_sentences = []
-    in_list = False
-
-    for sent in raw_sentences:
-        if LIST_TRIGGERS.match(sent):
-            in_list = True
-            list_sentences.append(sent)
-        elif in_list and len(sent.split()) < 6:
-            # very short sentence after list probably belongs to it
-            list_sentences.append(sent)
-        elif not in_list:
-            intro_sentences.append(sent)
-        else:
-            closing_sentences.append(sent)
-
-    # ── If nothing matched as a list, just return clean prose ────────────
-    if not list_sentences:
-        return " ".join(s if s.endswith(".") else s + "." for s in raw_sentences)
-
-    # ── Build formatted output ────────────────────────────────────────────
-    parts = []
-
-    if intro_sentences:
-        parts.append(" ".join(s if s.endswith(".") else s + "." for s in intro_sentences))
-
-    if list_sentences:
-        parts.append("\n**Here is what applies to you:**\n")
-        for i, item in enumerate(list_sentences, 1):
-            item = item.rstrip(".")
-            parts.append(f"{i}. {item}.")
-
-    if closing_sentences:
-        parts.append("\n" + " ".join(s if s.endswith(".") else s + "." for s in closing_sentences))
-
-    return "\n".join(parts)
+    """Answer is already formatted by format_chunks_as_bullets — just return it."""
+    return apply_simplified_language(answer)
 
 
 def format_fallback(retrieved):
-    """
-    When the model produces a weak answer, format the raw policy chunks
-    in a clean, readable way grouped by source document.
-    """
-    grouped = {}
-    for _, row in retrieved.head(4).iterrows():
-        src = nice_source_name(row["source_document"])
-        grouped.setdefault(src, []).append(row["text"].strip())
-
-    parts = []
-    for src, texts in grouped.items():
-        parts.append(f"**📋 {src}**\n")
-        combined = " ".join(texts)
-        # break into readable sentences and number them
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', combined) if len(s.strip()) > 10]
-        for i, s in enumerate(sentences[:8], 1):   # cap at 8 per source
-            parts.append(f"{i}. {s if s.endswith('.') else s + '.'}")
-        parts.append("")  # blank line between sources
-
-    return "\n".join(parts)
+    return format_chunks_as_bullets(retrieved)
 
 
 def nice_source_name(raw):
@@ -476,15 +495,10 @@ def load_everything():
     embeddings = np.load(_EMBED_PATH)
     print(f"✓ Loaded {len(df)} chunks, embeddings shape {embeddings.shape}")
 
-    # ── 2. Models ────────────────────────────────────────────────────────────
-    emb_model   = SentenceTransformer("all-MiniLM-L6-v2")
-    tokenizer   = AutoTokenizer.from_pretrained("google/flan-t5-base")
-    gen_model   = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
-    device      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    gen_model.to(device)
-    transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-tiny")
+    # ── 2. Embedding model only (no flan-t5, no whisper needed) ─────────────
+    emb_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    return df, embeddings, emb_model, tokenizer, gen_model, device, transcriber
+    return df, embeddings, emb_model
 
 
 # ---------------------------------------------------------------------------
@@ -755,7 +769,7 @@ st.markdown("""
 
 # Load models
 with st.spinner("Loading policy documents and models — first run takes a minute…"):
-    df, embeddings, emb_model, gen_tokenizer, gen_model, device, transcriber = load_everything()
+    df, embeddings, emb_model = load_everything()
 
 # Get active conversation
 active_conv = get_active_conv()
@@ -812,12 +826,13 @@ if user_input and active_conv:
                 retrieved = None
             else:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
-                raw       = generate_answer(user_input, retrieved, gen_tokenizer, gen_model, device)
-                raw       = apply_simplified_language(raw)
+                raw       = generate_answer(user_input, retrieved)
                 answer    = format_response(raw)
+                # Sources are shown inline in the answer headers (📋 Doc name)
+                # so we don't need the tag row — but keep for the stored message
                 sources   = (
                     list(retrieved["source_document"].unique())
-                    if not retrieved.empty else []
+                    if retrieved is not None and not retrieved.empty else []
                 )
 
         st.markdown(answer)
