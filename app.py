@@ -55,11 +55,11 @@ GREETINGS = {
 GREETING_RESPONSE = (
     "Hello! Welcome to the Safeguarding Companion.\n\n"
     "I am here to help you understand university policies on safeguarding, "
-    "disability rights, sexual harassment, and more - in plain, simple English.\n\n"
+    "disability rights, sexual harassment, and more — in plain, simple English.\n\n"
     "You can ask things like:\n"
-    "  - How do I report harassment?\n"
-    "  - What rights do students with disabilities have?\n"
-    "  - How do I file a complaint?\n\n"
+    "• How do I report harassment?\n"
+    "• What rights do students with disabilities have?\n"
+    "• How do I file a complaint?\n\n"
     "What would you like to know?"
 )
 
@@ -89,6 +89,7 @@ def download_pdfs(urls, folder):
 
 
 def extract_text_from_pdf(filepath):
+    """Try PyPDF2 first; fall back to OCR via pdf2image + pytesseract."""
     import PyPDF2
     text = ""
     try:
@@ -103,22 +104,26 @@ def extract_text_from_pdf(filepath):
     except Exception as e:
         print(f"PyPDF2 failed for {os.path.basename(filepath)}: {e}")
 
+    # OCR fallback — requires poppler (packages.txt) and tesseract (packages.txt)
     try:
         from pdf2image import convert_from_path
         import pytesseract
-        images = convert_from_path(filepath)
+        print(f"  → Trying OCR for {os.path.basename(filepath)} ...")
+        images = convert_from_path(filepath, dpi=200)
         ocr_text = ""
         for img in images:
-            ocr_text += pytesseract.image_to_string(img) + " "
+            ocr_text += pytesseract.image_to_string(img, lang="eng") + " "
         if ocr_text.strip():
+            print(f"  → OCR succeeded ({len(ocr_text.split())} words)")
             return ocr_text.strip()
     except Exception as e:
-        print(f"OCR fallback failed for {os.path.basename(filepath)}: {e}")
+        print(f"  → OCR failed for {os.path.basename(filepath)}: {e}")
 
     return ""
 
 
 def clean_text(text):
+    """Remove artefacts, fix hyphenation, normalise whitespace."""
     fixes = {
         "har- assment": "harassment",
         "dis- ability": "disability",
@@ -127,6 +132,11 @@ def clean_text(text):
     }
     for broken, fixed in fixes.items():
         text = text.replace(broken, fixed)
+
+    # remove bullet/numbering artefacts like "a)", "b)", "1.", "i."
+    text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)        # a) b) c)
+    text = re.sub(r"\b\d+\.\s*", "", text)              # 1. 2. 3.
+    text = re.sub(r"\b[ivxlIVXL]+\.\s*", "", text)      # i. ii. iii.
     text = text.replace("\n", " ")
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"[^a-zA-Z0-9.,;:()\-\/ ]", "", text)
@@ -163,6 +173,9 @@ def build_dataset(folder):
         filepath = os.path.join(folder, filename)
         print(f"Processing: {filename}")
         raw     = extract_text_from_pdf(filepath)
+        if not raw:
+            print(f"  ⚠ No text extracted from {filename}, skipping.")
+            continue
         cleaned = clean_text(raw)
         chunks  = chunk_text(cleaned)
         for idx, chunk in enumerate(chunks):
@@ -217,6 +230,22 @@ def is_greeting(text):
     return cleaned in GREETINGS or (len(words) <= 3 and words[0] in GREETINGS)
 
 
+def clean_answer(text):
+    """
+    Remove leftover policy numbering artefacts and tidy up the model output.
+    e.g.  '* b) Students must...' → 'Students must...'
+    """
+    # strip leading *, -, bullet chars
+    text = re.sub(r"^[\*\-•]\s*", "", text, flags=re.MULTILINE)
+    # strip lettered sub-items like "a)" "b)" at start of line or inline
+    text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)
+    # strip numbered items
+    text = re.sub(r"\b\d+[\.\)]\s*", "", text)
+    # collapse extra whitespace
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 def generate_answer(query, retrieved, tokenizer, model, device):
     if retrieved.empty:
         return (
@@ -237,18 +266,22 @@ def generate_answer(query, retrieved, tokenizer, model, device):
     context = "\n\n".join(context_parts)
 
     prompt = (
-        "You are a helpful assistant explaining university policies in simple, "
-        "friendly language for students including those with disabilities.\n\n"
-        "Using ONLY the policy context below, answer the question with 3 to 5 "
-        "short points. Use plain English. Avoid legal jargon. Be clear and kind.\n\n"
-        f"Policy Context:\n{context}\n\n"
+        "You are a friendly university support assistant. "
+        "A student asked: \"{query}\"\n\n"
+        "Using the policy excerpts below, write a clear, helpful answer "
+        "in 3 to 5 short sentences. "
+        "Do NOT copy sentences from the policy word-for-word. "
+        "Do NOT use bullet letters like a) b) or numbers like 1. 2. "
+        "Write naturally, as if explaining to a friend. "
+        "Use plain English — no legal jargon.\n\n"
+        f"Policy excerpts:\n{context}\n\n"
         f"Question: {query}\n\n"
-        "Answer:"
+        "Helpful answer:"
     )
 
     inputs = tokenizer(
         prompt,
-        max_length=512,
+        max_length=600,
         truncation=True,
         return_tensors="pt",
     ).to(device)
@@ -256,15 +289,19 @@ def generate_answer(query, retrieved, tokenizer, model, device):
     outputs = model.generate(
         input_ids=inputs.input_ids,
         attention_mask=inputs.attention_mask,
-        max_new_tokens=200,
+        max_new_tokens=220,
+        num_beams=4,
+        early_stopping=True,
+        no_repeat_ngram_size=3,
         do_sample=False,
     )
 
     answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    answer = clean_answer(answer)
 
     if len(answer.split()) < 5:
         return (
-            "The policy documents contain relevant information but I could not "
+            "The policy documents have relevant information but I could not "
             "generate a clear summary. Please contact the Gender Mainstreaming "
             "Directorate for assistance."
         )
@@ -272,10 +309,16 @@ def generate_answer(query, retrieved, tokenizer, model, device):
 
 
 def format_response(answer):
-    if "\n" in answer or answer.startswith(("-", "*")):
+    """Turn the answer into clean readable sentences."""
+    answer = clean_answer(answer)
+    # if already has newlines leave it
+    if "\n" in answer:
         return answer
-    sentences = [s.strip() for s in answer.split(".") if len(s.strip()) > 10]
-    return "\n".join(f"- {s}." for s in sentences)
+    # split on full stops into short sentences
+    sentences = [s.strip() for s in answer.split(".") if len(s.strip()) > 8]
+    if not sentences:
+        return answer
+    return " ".join(s + "." for s in sentences)
 
 
 def apply_simplified_language(text):
@@ -318,7 +361,7 @@ else:
     print("Building document dataset...")
     df = build_dataset(DATA_FOLDER)
     if df.empty:
-        raise RuntimeError("No documents could be processed. Check PDF URLs.")
+        raise RuntimeError("No documents could be processed. Check PDF URLs and poppler install.")
     df.to_csv(CHUNK_CSV, index=False)
     print("Generating embeddings...")
     _tmp_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -350,53 +393,108 @@ print("All models ready.")
 
 
 # ---------------------------------------------------------------------------
-# QUERY HANDLER
+# CHAT LOGIC
 # ---------------------------------------------------------------------------
 
-def handle_query(text_query, audio_input, simplified_mode):
-    query = ""
+def nice_source_name(raw):
+    return (
+        raw.replace(".pdf", "")
+           .replace("-", " ")
+           .replace("_", " ")
+           .strip()
+    )
 
+
+def render_bubble(role, content, sources=""):
+    """Return HTML for a single chat bubble."""
+    if role == "user":
+        safe = content.replace("<", "&lt;").replace(">", "&gt;")
+        return f"""
+        <div class="bubble-row user">
+          <div class="avatar user-av">You</div>
+          <div class="bubble user-bubble">{safe}</div>
+        </div>"""
+
+    # bot — clean up content
+    safe = content.replace("<", "&lt;").replace(">", "&gt;")
+    # convert newlines to <br>
+    safe = safe.replace("\n", "<br>")
+
+    source_html = ""
+    if sources:
+        lines = [l.strip() for l in sources.split("\n") if l.strip() and l.strip() != "Policy Sources:"]
+        tags  = "".join(
+            f'<span class="src-tag">📄 {nice_source_name(l.lstrip("- "))}</span>'
+            for l in lines if l
+        )
+        if tags:
+            source_html = f'<div class="src-row">{tags}</div>'
+
+    return f"""
+    <div class="bubble-row bot">
+      <div class="avatar bot-av">🛡</div>
+      <div class="bubble bot-bubble">{safe}{source_html}</div>
+    </div>"""
+
+
+WELCOME_HTML = """
+<div class="welcome-card">
+  <div class="w-icon">🛡️</div>
+  <h2>Safeguarding Companion</h2>
+  <p>Ask me anything about Makerere University's safeguarding policies,
+  disability rights, sexual harassment procedures, and student protections.
+  All answers come from official policy documents.</p>
+  <div class="pill-row">
+    <span class="pill" onclick="fillQuery(this)">How do I report harassment?</span>
+    <span class="pill" onclick="fillQuery(this)">Rights for students with disabilities</span>
+    <span class="pill" onclick="fillQuery(this)">How do I file a complaint?</span>
+    <span class="pill" onclick="fillQuery(this)">What is the HIV/AIDS policy?</span>
+    <span class="pill" onclick="fillQuery(this)">Support for persons with disabilities</span>
+  </div>
+</div>"""
+
+
+def build_chat_html(history):
+    if not history:
+        return WELCOME_HTML
+    return "\n".join(render_bubble(r, c, s) for r, c, s in history)
+
+
+def chat_fn(user_msg, audio_input, history_state):
+    query = ""
     if audio_input is not None:
         query = transcribe_audio(audio_input)
-
     if not query:
-        query = text_query or ""
+        query = (user_msg or "").strip()
+    if not query:
+        return history_state, build_chat_html(history_state), ""
 
-    if not query.strip():
-        return "Please type or speak your question.", ""
+    history_state = list(history_state) + [("user", query, "")]
 
     if is_greeting(query):
-        return GREETING_RESPONSE, ""
+        history_state.append(("bot", GREETING_RESPONSE, ""))
+        return history_state, build_chat_html(history_state), ""
 
     retrieved = retrieve_top_k(query, embedding_model, embeddings, df)
     answer    = generate_answer(query, retrieved, gen_tokenizer, gen_model, device)
-
-    if simplified_mode:
-        answer = apply_simplified_language(answer)
-
+    answer    = apply_simplified_language(answer)
     formatted = format_response(answer)
 
     sources = ""
     if not retrieved.empty:
-        source_names = [
-            s.replace(".pdf", "").replace("-", " ").replace("_", " ")
-            for s in retrieved["source_document"].unique()
-        ]
-        sources = "Policy Sources:\n" + "\n".join(f"  - {s}" for s in source_names)
+        names   = retrieved["source_document"].unique()
+        sources = "Policy Sources:\n" + "\n".join(f"- {n}" for n in names)
 
-    return formatted, sources
+    history_state.append(("bot", formatted, sources))
+    return history_state, build_chat_html(history_state), ""
 
 
 # ---------------------------------------------------------------------------
-# GRADIO INTERFACE
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# GRADIO INTERFACE  — replace everything from CSS = """ to demo.launch()
+# CSS
 # ---------------------------------------------------------------------------
 
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -407,392 +505,272 @@ body, .gradio-container {
     min-height: 100vh;
 }
 
-/* ── hide default gradio chrome ── */
 footer, .gr-form > .label-wrap { display: none !important; }
 .gradio-container { padding: 0 !important; max-width: 100% !important; }
 .contain { padding: 0 !important; }
 
-/* ── top bar ── */
+/* ── TOP BAR ── */
 .top-bar {
     position: sticky; top: 0; z-index: 100;
     display: flex; align-items: center; gap: 14px;
     padding: 14px 28px;
-    background: rgba(13,17,23,0.85);
-    backdrop-filter: blur(12px);
+    background: rgba(13,17,23,0.92);
+    backdrop-filter: blur(14px);
     border-bottom: 1px solid #21262d;
 }
-.top-bar-logo {
-    width: 38px; height: 38px; border-radius: 10px;
-    background: linear-gradient(135deg, #238636, #1f6feb);
+.top-logo {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: linear-gradient(135deg,#238636,#1f6feb);
     display: flex; align-items: center; justify-content: center;
-    font-size: 18px; flex-shrink: 0;
+    font-size: 20px; flex-shrink: 0;
 }
-.top-bar-title {
+.top-title {
     font-family: 'Playfair Display', serif;
-    font-size: 1.15rem; color: #e6edf3; letter-spacing: 0.01em;
+    font-size: 1.1rem; color: #e6edf3;
 }
-.top-bar-subtitle {
-    font-size: 0.72rem; color: #8b949e; margin-top: 1px;
-}
-.top-bar-badge {
-    margin-left: auto;
-    font-size: 0.68rem; font-weight: 500; letter-spacing: 0.05em;
-    padding: 3px 10px; border-radius: 20px;
-    background: rgba(35,134,54,0.15); color: #3fb950;
-    border: 1px solid rgba(63,185,80,0.3);
+.top-sub { font-size: 0.7rem; color: #8b949e; margin-top: 2px; }
+.online-badge {
+    margin-left: auto; font-size: 0.68rem; padding: 3px 12px;
+    border-radius: 20px; background: rgba(35,134,54,0.15);
+    color: #3fb950; border: 1px solid rgba(63,185,80,0.3);
+    font-weight: 500;
 }
 
-/* ── chat window ── */
-.chat-wrap {
-    max-width: 820px; margin: 0 auto;
-    padding: 24px 20px 200px;   /* bottom pad = input bar height */
-    display: flex; flex-direction: column; gap: 20px;
+/* ── CHAT AREA ── */
+.chat-scroll {
+    max-width: 780px; margin: 0 auto;
+    padding: 28px 20px 160px;
+    display: flex; flex-direction: column; gap: 22px;
 }
 
-/* ── bubbles ── */
-.bubble-row { display: flex; gap: 12px; align-items: flex-end; }
+/* ── WELCOME ── */
+.welcome-card {
+    text-align: center; padding: 48px 20px 32px;
+    animation: fadeUp .45s ease both;
+}
+.w-icon { font-size: 3.2rem; margin-bottom: 14px; }
+.welcome-card h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.7rem; color: #e6edf3; margin-bottom: 10px;
+}
+.welcome-card p {
+    color: #8b949e; font-size: 0.88rem; line-height: 1.75;
+    max-width: 480px; margin: 0 auto 26px;
+}
+.pill-row { display: flex; flex-wrap: wrap; gap: 9px; justify-content: center; }
+.pill {
+    font-size: 0.78rem; padding: 8px 16px; border-radius: 20px;
+    background: #161b22; border: 1px solid #30363d; color: #8b949e;
+    cursor: pointer; transition: all .2s; user-select: none;
+}
+.pill:hover { border-color: #58a6ff; color: #58a6ff; background: rgba(88,166,255,.07); }
+
+/* ── BUBBLES ── */
+.bubble-row {
+    display: flex; gap: 12px; align-items: flex-end;
+    animation: fadeUp .3s ease both;
+}
 .bubble-row.user { flex-direction: row-reverse; }
 
 .avatar {
-    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 14px; font-weight: 600;
+    font-size: 11px; font-weight: 700; letter-spacing: -.3px;
 }
-.avatar.bot  { background: linear-gradient(135deg,#238636,#1f6feb); color:#fff; }
-.avatar.user { background: #21262d; color: #8b949e; border:1px solid #30363d; }
+.bot-av  { background: linear-gradient(135deg,#238636,#1f6feb); color:#fff; font-size:16px; }
+.user-av { background: #21262d; color: #8b949e; border: 1px solid #30363d; font-size: 10px; }
 
 .bubble {
-    max-width: 72%; padding: 13px 16px;
-    border-radius: 18px; line-height: 1.65;
-    font-size: 0.9rem; position: relative;
-    animation: fadeUp 0.3s ease both;
+    max-width: 74%; padding: 14px 18px;
+    font-size: 0.895rem; line-height: 1.72;
+    border-radius: 20px; position: relative;
 }
-.bubble.bot {
+.bot-bubble {
     background: #161b22; border: 1px solid #21262d;
-    border-bottom-left-radius: 4px; color: #c9d1d9;
+    border-bottom-left-radius: 5px; color: #c9d1d9;
 }
-.bubble.user {
+.user-bubble {
     background: linear-gradient(135deg,#1f6feb,#388bfd);
-    border-bottom-right-radius: 4px; color: #fff;
+    border-bottom-right-radius: 5px; color: #fff;
 }
-.bubble ul { padding-left: 18px; margin-top: 6px; }
-.bubble li { margin-bottom: 5px; }
-.bubble strong { color: #e6edf3; }
 
-.source-tag {
-    display: inline-block; margin-top: 10px; margin-right: 6px;
-    font-size: 0.68rem; padding: 2px 8px; border-radius: 20px;
-    background: rgba(31,111,235,0.12); color: #58a6ff;
-    border: 1px solid rgba(88,166,255,0.2);
+/* source tags inside bot bubble */
+.src-row { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+.src-tag {
+    font-size: 0.67rem; padding: 3px 9px; border-radius: 20px;
+    background: rgba(31,111,235,.12); color: #58a6ff;
+    border: 1px solid rgba(88,166,255,.2);
 }
 
 @keyframes fadeUp {
-    from { opacity:0; transform:translateY(8px); }
+    from { opacity:0; transform:translateY(10px); }
     to   { opacity:1; transform:translateY(0); }
 }
 
-/* ── typing indicator ── */
-.typing { display: flex; gap: 5px; padding: 14px 16px; }
-.typing span {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: #58a6ff; animation: blink 1.2s infinite;
-}
-.typing span:nth-child(2) { animation-delay: 0.2s; }
-.typing span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes blink {
-    0%,80%,100% { opacity:0.2; transform:scale(0.85); }
-    40%          { opacity:1;   transform:scale(1); }
-}
-
-/* ── welcome card ── */
-.welcome-card {
-    text-align: center; padding: 40px 20px;
-    animation: fadeUp 0.5s ease both;
-}
-.welcome-card .shield { font-size: 3rem; margin-bottom: 14px; }
-.welcome-card h2 {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.6rem; color: #e6edf3; margin-bottom: 8px;
-}
-.welcome-card p { color: #8b949e; font-size: 0.88rem; line-height: 1.7; max-width: 460px; margin: 0 auto 24px; }
-.pill-wrap { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-.pill {
-    font-size: 0.78rem; padding: 7px 14px; border-radius: 20px;
-    background: #161b22; border: 1px solid #30363d; color: #8b949e;
-    cursor: pointer; transition: all 0.2s;
-}
-.pill:hover { border-color: #58a6ff; color: #58a6ff; background: rgba(88,166,255,0.06); }
-
-/* ── fixed input bar ── */
+/* ── FIXED INPUT BAR ── */
 .input-bar {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
-    padding: 16px 20px 20px;
-    background: linear-gradient(to top, #0d1117 70%, transparent);
+    padding: 14px 20px 22px;
+    background: linear-gradient(to top, #0d1117 72%, transparent);
 }
-.input-inner {
-    max-width: 820px; margin: 0 auto;
-    display: flex; align-items: flex-end; gap: 10px;
-    background: #161b22; border: 1px solid #30363d;
-    border-radius: 16px; padding: 10px 12px;
-    transition: border-color 0.2s;
+.input-shell {
+    max-width: 780px; margin: 0 auto;
+    display: flex; align-items: center; gap: 0;
+    background: #1c2128;
+    border: 1.5px solid #30363d;
+    border-radius: 28px;
+    padding: 10px 14px 10px 22px;
+    transition: border-color .2s;
+    min-height: 58px;
 }
-.input-inner:focus-within { border-color: #58a6ff; }
+.input-shell:focus-within { border-color: #58a6ff; }
 
-/* gradio textbox overrides */
-.input-inner .gr-textbox, .input-inner textarea {
-    background: transparent !important; border: none !important;
-    box-shadow: none !important; color: #e6edf3 !important;
-    font-family: 'Sora', sans-serif !important; font-size: 0.9rem !important;
-    resize: none !important; outline: none !important;
-    flex: 1; min-height: 24px; max-height: 120px;
-    padding: 2px 4px !important;
+/* textarea override */
+#qbox textarea {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #e6edf3 !important;
+    font-family: 'Sora', sans-serif !important;
+    font-size: 0.97rem !important;
+    resize: none !important;
+    outline: none !important;
+    min-height: 28px !important;
+    max-height: 140px !important;
+    padding: 0 !important;
+    line-height: 1.55 !important;
 }
-.input-inner textarea::placeholder { color: #484f58 !important; }
+#qbox textarea::placeholder { color: #484f58 !important; }
+#qbox { flex: 1 !important; border: none !important; background: transparent !important; box-shadow: none !important; }
+#qbox .wrap { border: none !important; box-shadow: none !important; background: transparent !important; padding: 0 !important; }
+#qbox label { display: none !important; }
 
+/* icon buttons inside bar */
+.bar-btn {
+    width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
+    background: transparent; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: #8b949e; font-size: 18px;
+    transition: color .2s, background .2s;
+    margin-left: 6px;
+}
+.bar-btn:hover { color: #e6edf3; background: rgba(255,255,255,.06); }
 .send-btn {
-    width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
-    background: linear-gradient(135deg,#238636,#1f6feb);
-    border: none; cursor: pointer; display: flex;
-    align-items: center; justify-content: center;
-    transition: opacity 0.2s, transform 0.1s;
-    font-size: 16px;
+    background: linear-gradient(135deg,#238636,#1f6feb) !important;
+    color: #fff !important; font-size: 16px !important;
 }
-.send-btn:hover { opacity: 0.85; }
-.send-btn:active { transform: scale(0.93); }
+.send-btn:hover { opacity: .85; }
 
-.input-tools {
-    display: flex; align-items: center; gap: 8px; margin-top: 8px;
-}
-.tool-btn {
-    font-size: 0.72rem; padding: 4px 10px; border-radius: 20px;
-    background: transparent; border: 1px solid #30363d; color: #8b949e;
-    cursor: pointer; display: flex; align-items: center; gap: 5px;
-    transition: all 0.2s;
-}
-.tool-btn:hover { border-color: #58a6ff; color: #58a6ff; }
-.tool-btn.active { background: rgba(35,134,54,0.12); border-color:#3fb950; color:#3fb950; }
-
-/* audio component shrink */
-#audio-wrap { display: none; }
-#audio-wrap.visible { display: block; padding: 8px 0 0; }
+/* audio component hidden by default */
+#audio-row { display: none; }
+#audio-row.show { display: flex; }
 """
 
-# ── JavaScript for chat behaviour ────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# JS — pill click fills the textarea; mic toggle shows audio row
+# ---------------------------------------------------------------------------
 JS = """
-function initChat() {
-    // pill click → fill textarea
-    document.querySelectorAll('.pill').forEach(p => {
-        p.addEventListener('click', () => {
-            const ta = document.querySelector('#text-input textarea');
-            if (ta) {
-                ta.value = p.textContent;
-                ta.dispatchEvent(new Event('input', {bubbles:true}));
-            }
-        });
-    });
-
-    // mic toggle
-    const micBtn = document.getElementById('mic-toggle');
-    const audioWrap = document.getElementById('audio-wrap');
-    if (micBtn && audioWrap) {
-        micBtn.addEventListener('click', () => {
-            audioWrap.classList.toggle('visible');
-            micBtn.classList.toggle('active');
-        });
-    }
+<script>
+function fillQuery(el) {
+    const ta = document.querySelector('#qbox textarea');
+    if (!ta) return;
+    ta.value = el.textContent.trim();
+    ta.dispatchEvent(new Event('input', {bubbles: true}));
+    ta.focus();
 }
-setTimeout(initChat, 800);
+
+function toggleMic() {
+    const row = document.getElementById('audio-row');
+    if (!row) return;
+    row.classList.toggle('show');
+    const btn = document.getElementById('mic-btn');
+    if (btn) btn.style.color = row.classList.contains('show') ? '#3fb950' : '';
+}
+
+// auto-scroll chat to bottom whenever DOM changes
+const observer = new MutationObserver(() => {
+    const el = document.getElementById('chat-display');
+    if (el) el.scrollTop = el.scrollHeight;
+});
+setTimeout(() => {
+    const el = document.getElementById('chat-display');
+    if (el) observer.observe(el, { childList: true, subtree: true });
+}, 1000);
+</script>
 """
 
-WELCOME_HTML = """
-<div class="welcome-card">
-  <div class="shield">🛡️</div>
-  <h2>How can I help you today?</h2>
-  <p>
-    Ask me anything about Makerere University's safeguarding policies,
-    disability rights, sexual harassment procedures, and student protections.
-    Answers are grounded in official policy documents.
-  </p>
-  <div class="pill-wrap">
-    <div class="pill">How do I report harassment?</div>
-    <div class="pill">Rights for students with disabilities</div>
-    <div class="pill">How do I file a complaint?</div>
-    <div class="pill">What is the HIV/AIDS policy?</div>
-    <div class="pill">Support for persons with disabilities</div>
-  </div>
-</div>
-"""
+# ---------------------------------------------------------------------------
+# GRADIO BLOCKS
+# ---------------------------------------------------------------------------
 
+with gr.Blocks(css=CSS, title="Safeguarding Companion") as demo:
 
-def render_message(role, content, sources=""):
-    if role == "user":
-        return f"""
-        <div class="bubble-row user">
-          <div class="avatar user">U</div>
-          <div class="bubble user">{content}</div>
-        </div>"""
-
-    # bot: convert bullet lines to <ul>
-    lines = content.strip().split("\n")
-    html_parts = []
-    in_ul = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            if not in_ul:
-                html_parts.append("<ul>"); in_ul = True
-            html_parts.append(f"<li>{stripped[2:]}</li>")
-        else:
-            if in_ul:
-                html_parts.append("</ul>"); in_ul = False
-            if stripped:
-                html_parts.append(f"<p>{stripped}</p>")
-    if in_ul:
-        html_parts.append("</ul>")
-
-    source_html = ""
-    if sources:
-        tags = "".join(
-            f'<span class="source-tag">📄 {s.strip()}</span>'
-            for s in sources.replace("Policy Sources:", "").split("\n")
-            if s.strip().startswith("-")
-        )
-        if tags:
-            source_html = f"<div style='margin-top:10px'>{tags}</div>"
-
-    inner = "\n".join(html_parts) + source_html
-    return f"""
-    <div class="bubble-row bot">
-      <div class="avatar bot">🛡</div>
-      <div class="bubble bot">{inner}</div>
-    </div>"""
-
-
-def chat_fn(user_msg, audio_input, simplified, history_state):
-    if not user_msg.strip() and audio_input is None:
-        return history_state, build_chat_html(history_state), ""
-
-    # resolve query (voice or text)
-    query = ""
-    if audio_input is not None:
-        query = transcribe_audio(audio_input)
-    if not query:
-        query = user_msg.strip()
-
-    if not query:
-        return history_state, build_chat_html(history_state), ""
-
-    # add user bubble
-    history_state = history_state + [("user", query, "")]
-
-    # greeting short-circuit
-    if is_greeting(query):
-        history_state = history_state + [("bot", GREETING_RESPONSE, "")]
-        return history_state, build_chat_html(history_state), ""
-
-    # RAG pipeline
-    retrieved = retrieve_top_k(query, embedding_model, embeddings, df)
-    answer    = generate_answer(query, retrieved, gen_tokenizer, gen_model, device)
-    if simplified:
-        answer = apply_simplified_language(answer)
-    formatted = format_response(answer)
-
-    sources = ""
-    if not retrieved.empty:
-        names = [
-            s.replace(".pdf", "").replace("-", " ").replace("_", " ")
-            for s in retrieved["source_document"].unique()
-        ]
-        sources = "Policy Sources:\n" + "\n".join(f"  - {n}" for n in names)
-
-    history_state = history_state + [("bot", formatted, sources)]
-    return history_state, build_chat_html(history_state), ""
-
-
-def build_chat_html(history):
-    if not history:
-        return WELCOME_HTML
-    parts = []
-    for role, content, sources in history:
-        parts.append(render_message(role, content, sources))
-    return "\n".join(parts)
-
-
-# ── Gradio blocks ─────────────────────────────────────────────────────────────
-
-with gr.Blocks(css=CSS, title="eSafeRide — Safeguarding Companion") as demo:
-
-    # top bar
+    # ── TOP BAR
     gr.HTML("""
     <div class="top-bar">
-      <div class="top-bar-logo">🛡️</div>
+      <div class="top-logo">🛡️</div>
       <div>
-        <div class="top-bar-title">Safeguarding Companion</div>
-        <div class="top-bar-subtitle">Makerere University · Policy Q&A</div>
+        <div class="top-title">Safeguarding Companion</div>
+        <div class="top-sub">Makerere University · Policy Q&A</div>
       </div>
-      <div class="top-bar-badge">● Online</div>
+      <div class="online-badge">● Online</div>
     </div>
     """)
 
-    # chat display area
-    chat_display = gr.HTML(value=WELCOME_HTML, elem_id="chat-display")
+    # ── CHAT DISPLAY
+    with gr.Column(elem_classes=["chat-scroll"]):
+        chat_display = gr.HTML(value=WELCOME_HTML, elem_id="chat-display")
 
-    # hidden state
+    # ── HIDDEN STATE
     history_state = gr.State([])
 
-    # ── fixed input bar (rendered as HTML + real Gradio inputs overlaid) ──
+    # ── FIXED INPUT BAR (HTML shell + real Gradio widgets inside)
+    gr.HTML("""<div class="input-bar"><div class="input-shell">""")
+
+    text_input = gr.Textbox(
+        placeholder="Ask anything about university policies...",
+        show_label=False,
+        lines=1,
+        max_lines=5,
+        elem_id="qbox",
+        scale=1,
+        container=False,
+    )
+
+    # mic + send buttons rendered as HTML inside the bar
     gr.HTML("""
-    <div class="input-bar">
-      <div class="input-inner" id="input-inner-wrap">
+      <button class="bar-btn" id="mic-btn" onclick="toggleMic()" title="Voice input">🎙</button>
+      <button class="bar-btn send-btn" id="send-js-btn" title="Send"
+        onclick="document.getElementById('send-real-btn').click()">➤</button>
+    </div></div>
     """)
 
-    with gr.Row(elem_id="input-row"):
-        text_input = gr.Textbox(
-            placeholder="Ask about policies, rights, reporting...",
-            show_label=False,
-            lines=1,
-            max_lines=4,
-            elem_id="text-input",
-            scale=9,
-            container=False,
-        )
-        submit_btn = gr.Button("➤", elem_id="send-btn", scale=1, min_width=42, variant="primary")
+    # real (hidden) send button wired to Gradio
+    send_btn = gr.Button("Send", elem_id="send-real-btn", visible=False)
 
-    gr.HTML("""
-      </div>
-      <div class="input-tools">
-        <button class="tool-btn active" id="simplified-hint" style="pointer-events:none">
-          🌿 Plain English mode
-        </button>
-        <button class="tool-btn" id="mic-toggle">🎙 Voice input</button>
-      </div>
-    </div>
-    """)
+    # ── AUDIO ROW (hidden until mic clicked)
+    gr.HTML('<div id="audio-row">')
+    audio_input = gr.Audio(
+        sources=["microphone"],
+        type="filepath",
+        label="Speak your question — then click Send",
+        show_label=True,
+    )
+    gr.HTML("</div>")
 
-    # hidden simplified toggle (always-on for clean UX; expose if needed)
-    simplified_toggle = gr.Checkbox(value=True, visible=False)
-
-    # audio hidden by default
-    with gr.Row(visible=False) as audio_row:
-        audio_input = gr.Audio(
-            sources=["microphone"],
-            type="filepath",
-            label="Speak your question",
-            show_label=False,
-        )
-
-    # wire up
-    submit_btn.click(
+    # ── WIRE UP
+    send_btn.click(
         fn=chat_fn,
-        inputs=[text_input, audio_input, simplified_toggle, history_state],
+        inputs=[text_input, audio_input, history_state],
         outputs=[history_state, chat_display, text_input],
     )
     text_input.submit(
         fn=chat_fn,
-        inputs=[text_input, audio_input, simplified_toggle, history_state],
+        inputs=[text_input, audio_input, history_state],
         outputs=[history_state, chat_display, text_input],
     )
 
-    gr.HTML(f"<script>{JS}</script>")
+    # inject JS last
+    gr.HTML(JS)
 
 demo.launch(ssr_mode=False)
