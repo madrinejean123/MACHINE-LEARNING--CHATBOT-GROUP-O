@@ -21,6 +21,40 @@ nltk.download("punkt", quiet=True)
 nltk.download("punkt_tab", quiet=True)
 
 # ---------------------------------------------------------------------------
+# VOICE HELPERS  (gTTS for output, whisper-tiny for input — both free/local)
+# ---------------------------------------------------------------------------
+
+def text_to_speech(text):
+    """Convert answer text to MP3 using gTTS (free, no API)."""
+    try:
+        from gtts import gTTS
+        import tempfile
+        clean = re.sub(r'[•\*\-]', '', text)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        tts   = gTTS(text=clean, lang='en', slow=False)
+        tmp   = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+        tts.save(tmp.name)
+        return tmp.name
+    except Exception as e:
+        print(f"TTS error: {e}")
+        return None
+
+
+def transcribe_audio(audio_path):
+    """Transcribe voice input using whisper-tiny (free, runs locally)."""
+    try:
+        from transformers import pipeline as hf_pipeline
+        transcriber = hf_pipeline(
+            "automatic-speech-recognition",
+            model="openai/whisper-tiny"
+        )
+        result = transcriber(audio_path)
+        return result["text"].strip()
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        return ""
+
+# ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 
@@ -675,6 +709,8 @@ if "font_size"       not in st.session_state: st.session_state.font_size       =
 if "conversations"   not in st.session_state: st.session_state.conversations   = []
 if "active_conv_id"  not in st.session_state: st.session_state.active_conv_id  = None
 if "suggested_query" not in st.session_state: st.session_state.suggested_query = None
+if "voice_input"     not in st.session_state: st.session_state.voice_input     = None
+if "show_sidebar"    not in st.session_state: st.session_state.show_sidebar    = True
 
 # ---------------------------------------------------------------------------
 # DYNAMIC CSS
@@ -777,6 +813,25 @@ html, body, [class*="css"] {{
     background:transparent !important; border:none !important; padding:4px 0 !important;
 }}
 hr {{ border-color:{BORDER} !important; }}
+/* Sidebar toggle button fixed on left edge */
+.sidebar-toggle-btn {{
+    position:fixed; top:50%; left:0; transform:translateY(-50%);
+    z-index:999; background:linear-gradient(135deg,#238636,#1f6feb);
+    color:white; border:none; border-radius:0 8px 8px 0;
+    width:22px; height:60px; cursor:pointer;
+    font-size:12px; display:flex; align-items:center; justify-content:center;
+    box-shadow:2px 0 8px rgba(0,0,0,0.3);
+}}
+.sidebar-toggle-btn:hover {{ width:28px; transition:width 0.2s; }}
+/* Mic and speaker buttons */
+.voice-btn {{
+    display:inline-flex; align-items:center; justify-content:center;
+    background:linear-gradient(135deg,#238636,#1f6feb);
+    color:white; border:none; border-radius:50%;
+    width:38px; height:38px; cursor:pointer; font-size:16px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.2); margin:0 4px;
+}}
+.voice-btn:hover {{ transform:scale(1.1); transition:transform 0.15s; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -932,10 +987,37 @@ if active_conv:
             st.markdown(msg["content"], unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# CHAT INPUT
+# SIDEBAR TOGGLE — always-visible button to reopen sidebar
+# ---------------------------------------------------------------------------
+sidebar_toggle_html = """
+<button class="sidebar-toggle-btn"
+  onclick="var s=window.parent.document.querySelector('[data-testid=stSidebar]');if(s){s.style.display=s.style.display==='none'?'flex':'none';}"
+  title="Toggle sidebar">☰</button>
+"""
+st.markdown(sidebar_toggle_html, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# CHAT INPUT  (text + voice mic)
 # ---------------------------------------------------------------------------
 
-user_input = st.chat_input("Ask anything about university policies…")
+# Voice input widget — small mic above the text box
+st.markdown("**🎙️ Speak your question** (optional):")
+audio_input = st.audio_input("Record your question", key="mic_input", label_visibility="collapsed")
+
+# Transcribe if audio was recorded
+if audio_input is not None:
+    with st.spinner("🎙️ Transcribing your voice…"):
+        transcribed = transcribe_audio(audio_input)
+    if transcribed:
+        st.session_state.voice_input = transcribed
+        st.info(f"🎙️ Heard: *{transcribed}*")
+
+user_input = st.chat_input("Or type your question here…")
+
+# Use voice input if no text typed
+if st.session_state.voice_input and not user_input:
+    user_input = st.session_state.voice_input
+    st.session_state.voice_input = None
 
 if st.session_state.suggested_query and not user_input:
     user_input = st.session_state.suggested_query
@@ -981,7 +1063,7 @@ if user_input and active_conv:
                     if retrieved is not None and not retrieved.empty else []
                 )
 
-        # Debug badge — shows clearly whether Groq ran or not
+        # Debug badge
         if groq_used is True:
             st.success("✅ Groq (Llama 3) generated this answer")
         elif groq_used is False:
@@ -992,6 +1074,13 @@ if user_input and active_conv:
             )
 
         st.markdown(answer)
+
+        # Voice output — read answer aloud
+        with st.spinner("🔊 Generating audio…"):
+            audio_path = text_to_speech(answer)
+        if audio_path:
+            st.audio(audio_path, format="audio/mp3", autoplay=False)
+            st.caption("🔊 Tap play to listen to this answer")
 
         if sources:
             tags = "".join(
