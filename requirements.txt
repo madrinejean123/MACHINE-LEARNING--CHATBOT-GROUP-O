@@ -13,3 +13,4 @@ numpy
 pandas
 pdf2image
 pytesseract
+sentencepiece
