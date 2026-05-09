@@ -1,4 +1,5 @@
-""" Safeguarding Companion
+"""
+eSafeRide Safeguarding Companion
 RAG-Based Policy Question-Answering System for Makerere University
 - Uses Groq (Llama 3) for free, fast, clean answer generation
 """
@@ -345,7 +346,7 @@ def retrieve_top_k(query, model, embeddings, df, k=TOP_K, threshold=SIMILARITY_T
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL   = "llama3-8b-8192"   # free on Groq, very fast
+GROQ_MODEL   = "llama-3.1-8b-instant"   # current active free model on Groq (2026)
 
 
 def polish_with_groq(question: str, raw_policy_text: str) -> str:
