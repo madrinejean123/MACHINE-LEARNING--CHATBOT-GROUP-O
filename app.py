@@ -37,10 +37,10 @@ GITHUB_PDF_URLS = [
 DATA_FOLDER          = "data"
 CHUNK_CSV            = "policy_chunks.csv"
 EMBEDDINGS_NPY       = "chunk_embeddings.npy"
-CHUNK_MAX_WORDS      = 250   # bigger chunks = more complete policy text per chunk
-CHUNK_OVERLAP        = 2    # more overlap = less chance of cutting a key sentence
-TOP_K                = 7    # retrieve more candidate chunks
-SIMILARITY_THRESHOLD = 0.20 # lower threshold = don't miss relevant chunks
+CHUNK_MAX_WORDS      = 250
+CHUNK_OVERLAP        = 2
+TOP_K                = 7
+SIMILARITY_THRESHOLD = 0.20
 
 STOP_WORDS = {
     "the", "and", "for", "are", "that", "this", "with", "how",
@@ -191,35 +191,25 @@ def build_dataset(folder):
 # RETRIEVAL
 # ---------------------------------------------------------------------------
 
-# Maps user intent keywords → extra search terms that match policy language
 QUERY_EXPANSIONS = {
-    # harassment
     "harass":    "report complaint procedure steps lodge file officer committee investigation",
     "assault":   "report complaint procedure steps lodge file officer committee investigation",
     "abuse":     "report complaint procedure steps lodge file officer committee investigation",
     "harassed":  "report complaint procedure steps lodge file officer committee investigation",
-    # disability
     "disabilit": "rights accommodation access support services equal opportunity",
     "disabled":  "rights accommodation access support services equal opportunity",
     "pwd":       "rights accommodation access support services equal opportunity",
-    # hiv aids
     "hiv":       "rights confidentiality treatment support non-discrimination policy",
     "aids":      "rights confidentiality treatment support non-discrimination policy",
-    # complaint / reporting
     "report":    "complaint procedure steps lodge file officer committee investigation",
     "complain":  "complaint procedure steps lodge file officer committee investigation",
     "file":      "complaint procedure steps lodge file officer committee investigation",
-    # rights general
     "right":     "rights responsibilities protection policy entitlement",
     "protect":   "safeguarding protection rights policy procedure",
 }
 
 
 def expand_query(query):
-    """
-    Expand the user query with policy-language terms so the embeddings
-    match procedure/steps chunks instead of just definition chunks.
-    """
     q_lower = query.lower()
     extras  = set()
     for trigger, expansion in QUERY_EXPANSIONS.items():
@@ -245,27 +235,22 @@ def keyword_filter(df, query):
 
 
 def retrieve_top_k(query, model, embeddings, df, k=TOP_K, threshold=SIMILARITY_THRESHOLD):
-    # Expand query to match policy procedure language
     expanded = expand_query(query)
-
-    # Keyword filter on original query keywords (keeps it relevant)
     filtered = keyword_filter(df, query)
     indices  = filtered.index.tolist()
     f_embeds = embeddings[indices]
 
-    # Encode the EXPANDED query for semantic similarity
     q_vec  = model.encode([expanded], normalize_embeddings=True)
     scores = cosine_similarity(q_vec, f_embeds)[0]
 
     sorted_i = np.argsort(scores)[::-1]
     top_i    = [i for i in sorted_i[:k] if scores[i] >= threshold]
     if not top_i:
-        top_i = sorted_i[:5]   # grab top 5 even if below threshold
+        top_i = sorted_i[:5]
 
     results = filtered.iloc[top_i].copy()
     results["similarity_score"] = scores[top_i]
 
-    # Boost chunks that contain procedure/action words — push them to the top
     ACTION_WORDS = ["report", "complain", "lodge", "file", "contact", "procedure",
                     "steps", "committee", "officer", "directorate", "submit", "notify",
                     "support", "rights", "entitled", "must", "shall", "access"]
@@ -293,38 +278,63 @@ def is_greeting(text):
     return cleaned in GREETINGS or (len(words) <= 3 and words[0] in GREETINGS)
 
 
+# ── UPDATED: clean_sentence ──────────────────────────────────────────────────
 def clean_sentence(s):
     """Clean up a single policy sentence for display."""
-    # Remove letter prefixes like (a) (b) f) g) etc
-    s = re.sub(r'^\s*[\(\[]?[a-zA-Z][\)\]]\s*', '', s)
-    # Remove number prefixes like 1. 2. 3.
-    s = re.sub(r'^\s*\d+[\.\)]\s*', '', s)
-    # Fix broken hyphenated words e.g. "unsur- ed" → "unsured"
+    # Fix OCR mid-word spaces: "unsur e" → "unsure", "c omplaints" → "complaints"
+    s = re.sub(
+        r'\b([a-zA-Z]{2,})\s([a-z]{1,3})\b',
+        lambda m: m.group(1) + m.group(2) if m.group(2) not in STOP_WORDS else m.group(0),
+        s
+    )
+    # Remove letter/number list prefixes: (a) a) 1. i.
+    s = re.sub(r'^\s*[\(\[]?[a-zA-Z0-9]+[\)\]\.]\s*', '', s)
+    # Fix broken hyphenated words: "har- assment" → "harassment"
     s = re.sub(r'(\w+)-\s+(\w+)', r'\1\2', s)
-    # Collapse extra whitespace
+    # Collapse whitespace
     s = re.sub(r'\s+', ' ', s)
     return s.strip()
 
 
+# ── UPDATED: split_into_sentences ────────────────────────────────────────────
 def split_into_sentences(text):
-    """Split a chunk of text into clean individual sentences."""
-    # Split on sentence boundaries
+    """Split chunk text into clean, deduplicated sentences."""
     raw = re.split(r'(?<=[.!?])\s+', text)
+    seen = set()
     sentences = []
     for s in raw:
         s = clean_sentence(s)
-        if len(s.split()) >= 5:   # skip very short fragments
-            sentences.append(s)
+        if len(s.split()) < 6:           # skip very short fragments
+            continue
+        key = re.sub(r'\s+', ' ', s.lower().strip())
+        if key in seen:                  # deduplicate
+            continue
+        seen.add(key)
+        sentences.append(s)
     return sentences
 
 
-def format_chunks_as_bullets(retrieved):
+# Sentences that are background/principles only — not actionable
+SKIP_PHRASES = [
+    "there is no documented",
+    "current evidence",
+    "principles underpinning",
+    "it should be noted",
+    "as quasi-judicial",
+    "no current evidence",
+    "standard procedures concerning",
+    "enjoy relative flexibility",
+]
+
+
+# ── UPDATED: format_chunks_as_bullets ────────────────────────────────────────
+def format_chunks_as_bullets(retrieved, query=""):
     """
-    Format retrieved chunks exactly like the notebook output:
-    - Intro line
-    - Bullet points for each sentence
-    - Source label per document section
-    Skips definition-only chunks, prioritises procedure/action chunks.
+    Format retrieved policy chunks into clearly organised bullet answers.
+    - One section per source document
+    - Actionable/procedure sentences prioritised
+    - Background/definition sentences filtered out
+    - No OCR garbage, no duplicates
     """
     ACTION_WORDS = {
         "report", "lodge", "file", "contact", "collect", "document",
@@ -332,8 +342,10 @@ def format_chunks_as_bullets(retrieved):
         "note", "familiarize", "request", "support", "access", "entitled",
         "rights", "must", "should", "procedure", "steps", "committee",
         "directorate", "officer", "complaint", "evidence", "witness",
+        "can", "will", "shall", "ensure", "provide", "receive",
     }
 
+    # Group chunks by source document
     grouped = {}
     for _, row in retrieved.iterrows():
         src = nice_source_name(row["source_document"])
@@ -343,34 +355,39 @@ def format_chunks_as_bullets(retrieved):
     total_bullets = 0
 
     for src, texts in grouped.items():
-        combined   = " ".join(texts)
-        sentences  = split_into_sentences(combined)
+        combined  = " ".join(texts)
+        sentences = split_into_sentences(combined)  # already deduplicated
 
-        # Score each sentence — prefer action/procedure sentences
+        # Filter out background/principle sentences
+        sentences = [
+            s for s in sentences
+            if not any(p in s.lower() for p in SKIP_PHRASES)
+        ]
+
+        if not sentences:
+            continue
+
+        # Score: action sentences score higher
         scored = []
         for s in sentences:
             s_lower = s.lower()
             score   = sum(1 for w in ACTION_WORDS if w in s_lower)
             scored.append((score, s))
 
-        # Sort: action sentences first, then the rest
+        # Sort by score descending, keep top 8 per source
         scored.sort(key=lambda x: x[0], reverse=True)
+        top = [s for _, s in scored[:8]]
 
-        # Take up to 10 sentences per source, minimum score 0 (include all)
-        top_sentences = [s for _, s in scored[:10]]
-        # Re-sort back into reading order by original position
+        # Restore reading order
         order = {s: i for i, s in enumerate(sentences)}
-        top_sentences.sort(key=lambda s: order.get(s, 999))
+        top.sort(key=lambda s: order.get(s, 999))
 
-        if not top_sentences:
-            continue
-
+        # Write section
         parts.append(f"\n**📋 {src}**\n")
-        for s in top_sentences:
-            # Ensure sentence ends with punctuation
+        for s in top:
             if not s.endswith(('.', '!', '?')):
                 s += '.'
-            parts.append(f"• {s}")
+            parts.append(f"- {s}")
             total_bullets += 1
 
     if total_bullets == 0:
@@ -379,13 +396,18 @@ def format_chunks_as_bullets(retrieved):
             "Please contact the **Directorate of Gender Mainstreaming** directly for guidance."
         )
 
-    return "\n".join(parts)
+    # Intro line using the user's query
+    header = ""
+    if query:
+        header = f"Here is what the policies say about **{query.strip()}**:\n\n"
+
+    return header + "\n".join(parts)
 
 
+# ── UPDATED: generate_answer — passes query through ──────────────────────────
 def generate_answer(query, retrieved):
     """
     Directly format retrieved policy chunks into a clean, readable answer.
-    No AI generation — just the actual policy text, beautifully structured.
     """
     if retrieved is None or retrieved.empty:
         return (
@@ -393,7 +415,7 @@ def generate_answer(query, retrieved):
             "Please try rephrasing your question, or contact the **Gender Mainstreaming "
             "Directorate** directly for assistance."
         )
-    return format_chunks_as_bullets(retrieved)
+    return format_chunks_as_bullets(retrieved, query=query)
 
 
 def apply_simplified_language(text):
@@ -439,11 +461,6 @@ def get_chat_title(messages):
 # ---------------------------------------------------------------------------
 # LOAD MODELS
 # ---------------------------------------------------------------------------
-# On Hugging Face Spaces, /data is the only folder that persists across
-# restarts (requires "Persistent storage" enabled — free on most plans).
-# We download chunks/embeddings there once and never again.
-# Falls back to current directory if /data isn't available.
-# ---------------------------------------------------------------------------
 
 GITHUB_RAW_BASE    = (
     "https://raw.githubusercontent.com/"
@@ -452,7 +469,6 @@ GITHUB_RAW_BASE    = (
 CHUNK_CSV_URL      = f"{GITHUB_RAW_BASE}/policy_chunks.csv"
 EMBEDDINGS_NPY_URL = f"{GITHUB_RAW_BASE}/chunk_embeddings.npy"
 
-# Use /data if it exists (HF persistent storage), otherwise current dir
 _CACHE_DIR  = "/data" if os.path.isdir("/data") else "."
 _CHUNK_PATH = os.path.join(_CACHE_DIR, "policy_chunks.csv")
 _EMBED_PATH = os.path.join(_CACHE_DIR, "chunk_embeddings.npy")
@@ -479,8 +495,6 @@ def _download_if_missing(url, local_path):
 
 @st.cache_resource(show_spinner=False)
 def load_everything():
-    # ── 1. Chunks & embeddings ───────────────────────────────────────────────
-    # Downloaded once into /data (persistent) — zero wait on every restart after
     csv_ok = _download_if_missing(CHUNK_CSV_URL,      _CHUNK_PATH)
     npy_ok = _download_if_missing(EMBEDDINGS_NPY_URL, _EMBED_PATH)
 
@@ -495,7 +509,6 @@ def load_everything():
     embeddings = np.load(_EMBED_PATH)
     print(f"✓ Loaded {len(df)} chunks, embeddings shape {embeddings.shape}")
 
-    # ── 2. Embedding model only (no flan-t5, no whisper needed) ─────────────
     emb_model = SentenceTransformer("all-MiniLM-L6-v2")
 
     return df, embeddings, emb_model
@@ -672,7 +685,6 @@ hr { border-color: #21262d !important; }
 # ---------------------------------------------------------------------------
 
 if "conversations" not in st.session_state:
-    # List of {id, title, messages, timestamp}
     st.session_state.conversations = []
 
 if "active_conv_id" not in st.session_state:
@@ -700,7 +712,6 @@ def get_active_conv():
     return None
 
 
-# Make sure there's always at least one conversation
 if not st.session_state.conversations:
     new_conversation()
 if st.session_state.active_conv_id is None and st.session_state.conversations:
@@ -722,7 +733,6 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # New chat button
     if st.button("✦  New conversation", use_container_width=True, key="new_chat_btn"):
         new_conversation()
         st.rerun()
@@ -734,9 +744,7 @@ with st.sidebar:
     else:
         for conv in st.session_state.conversations:
             is_active = conv["id"] == st.session_state.active_conv_id
-            active_cls = "active" if is_active else ""
             label = conv["title"]
-            ts    = conv["timestamp"]
 
             clicked = st.button(
                 f"💬  {label}",
@@ -755,7 +763,6 @@ with st.sidebar:
 # MAIN CONTENT
 # ---------------------------------------------------------------------------
 
-# Header
 st.markdown("""
 <div class="main-header">
   <div class="main-logo">🛡️</div>
@@ -767,14 +774,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Load models
 with st.spinner("Loading policy documents and models — first run takes a minute…"):
     df, embeddings, emb_model = load_everything()
 
-# Get active conversation
 active_conv = get_active_conv()
 
-# Welcome screen (no messages yet)
 if active_conv and not active_conv["messages"]:
     st.markdown("""
     <div class="welcome-card">
@@ -793,7 +797,6 @@ if active_conv and not active_conv["messages"]:
     </div>
     """, unsafe_allow_html=True)
 
-# Render chat history for active conversation
 if active_conv:
     for msg in active_conv["messages"]:
         with st.chat_message(msg["role"], avatar="🛡️" if msg["role"] == "assistant" else "🧑"):
@@ -806,17 +809,14 @@ if active_conv:
 user_input = st.chat_input("Ask anything about university policies…")
 
 if user_input and active_conv:
-    # Show user message
     with st.chat_message("user", avatar="🧑"):
         st.markdown(user_input)
 
     active_conv["messages"].append({"role": "user", "content": user_input})
 
-    # Update conversation title from first user message
     if active_conv["title"] == "New conversation":
         active_conv["title"] = user_input[:45] + ("…" if len(user_input) > 45 else "")
 
-    # Generate response
     with st.chat_message("assistant", avatar="🛡️"):
         with st.spinner("Searching policy documents…"):
 
@@ -828,8 +828,6 @@ if user_input and active_conv:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
                 raw       = generate_answer(user_input, retrieved)
                 answer    = format_response(raw)
-                # Sources are shown inline in the answer headers (📋 Doc name)
-                # so we don't need the tag row — but keep for the stored message
                 sources   = (
                     list(retrieved["source_document"].unique())
                     if retrieved is not None and not retrieved.empty else []
