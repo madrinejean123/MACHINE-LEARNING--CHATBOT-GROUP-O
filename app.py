@@ -1,7 +1,7 @@
 """
 eSafeRide Safeguarding Companion
 RAG-Based Policy Question-Answering System for Makerere University
-- Uses flan-t5-large locally (no API, no cost)
+- Uses Groq (Llama 3) for free, fast, clean answer generation
 """
 
 import os
@@ -11,13 +11,11 @@ import requests
 import numpy as np
 import pandas as pd
 import nltk
-import torch
 import streamlit as st
 from datetime import datetime
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 nltk.download("punkt", quiet=True)
 nltk.download("punkt_tab", quiet=True)
@@ -343,65 +341,68 @@ def retrieve_top_k(query, model, embeddings, df, k=TOP_K, threshold=SIMILARITY_T
 
 
 # ---------------------------------------------------------------------------
-# LOCAL FLAN-T5 GENERATION  (no API, no cost, runs on HuggingFace Space)
+# GROQ GENERATION  (free, fast, clean — needs GROQ_API_KEY secret in Space)
 # ---------------------------------------------------------------------------
 
-@st.cache_resource(show_spinner=False)
-def load_generator():
-    """Load flan-t5-large once and cache it. Runs locally — no API needed."""
-    print("Loading flan-t5-large model...")
-    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
-    model     = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large")
-    device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    print(f"flan-t5-large loaded on {device}")
-    return tokenizer, model
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL   = "llama3-8b-8192"   # free on Groq, very fast
 
 
-def polish_with_flan(question: str, raw_policy_text: str) -> str:
+def polish_with_groq(question: str, raw_policy_text: str) -> str:
     """
-    Uses flan-t5-large (local, free) to rewrite raw OCR policy text
-    into plain simple English. No API key needed.
-    Returns polished string, or None if generation fails.
+    Sends retrieved policy chunks to Groq (free Llama 3).
+    Rewrites them into clean, plain English with numbered steps.
+    Returns polished string, or None if the call fails.
     """
+    if not GROQ_API_KEY:
+        print("No GROQ_API_KEY found — skipping Groq polish.")
+        return None
+
+    system_prompt = (
+        "You are a helpful university safeguarding assistant for Makerere University students. "
+        "Your job is to explain university policies in plain, simple English that any student can understand. "
+        "Rules:\n"
+        "1. Fix OCR errors like merged words (e.g. 'mustbe' -> 'must be', 'Directorateof' -> 'Directorate of').\n"
+        "2. If the answer describes steps or a procedure, use a numbered list (1. 2. 3.).\n"
+        "3. If it is general information, use clear bullet points starting with •.\n"
+        "4. Use ONLY the policy text provided. Do not add anything extra.\n"
+        "5. Remove repeated sentences.\n"
+        "6. Keep it short and friendly.\n"
+        "7. Always end with: 'For more help, contact the Directorate of Gender Mainstreaming at gendermainstreaming@mak.ac.ug or call +256 (0)414 532 631.'"
+    )
+
+    user_prompt = (
+        f"A student asked: \"{question}\"\n\n"
+        f"Here is the raw policy text retrieved from official documents:\n"
+        f"---\n{raw_policy_text[:3000]}\n---\n\n"
+        f"Write a clear, simple answer for the student now:"
+    )
+
     try:
-        tokenizer, model = load_generator()
-
-        prompt = (
-            "You are a helpful assistant explaining university policies in simple "
-            "friendly language for students.\n\n"
-            "Using ONLY the policy context below, answer the question with 3 to 5 "
-            "short bullet points. Use plain simple English. Avoid legal jargon. "
-            "Be friendly and clear. Each bullet point should be one sentence.\n\n"
-            f"Policy Context:\n{raw_policy_text[:1200]}\n\n"
-            f"Question: {question}\n\n"
-            "Simple answer:"
+        response = requests.post(
+            GROQ_API_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "model":       GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                "max_tokens":  600,
+                "temperature": 0.3,
+            },
+            timeout=30,
         )
-
-        inputs = tokenizer(
-            prompt,
-            max_length=512,
-            truncation=True,
-            return_tensors="pt"
-        ).to(model.device)
-
-        outputs = model.generate(
-            input_ids=inputs.input_ids,
-            attention_mask=inputs.attention_mask,
-            max_new_tokens=300,
-            do_sample=False,
-            num_beams=4,
-        )
-
-        answer = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-
-        if len(answer.split()) < 5:
-            return None
-
-        return answer
+        response.raise_for_status()
+        answer = response.json()["choices"][0]["message"]["content"].strip()
+        return answer if answer else None
 
     except Exception as e:
-        print(f"flan-t5 generation failed: {e}")
+        print(f"Groq polish failed: {e}")
         return None
 
 
@@ -519,8 +520,8 @@ def format_as_bullets(answer):
 def generate_answer(question: str, retrieved) -> str:
     """
     1. Collects raw text from retrieved policy chunks.
-    2. Sends to flan-t5-large (local, free) to rewrite into plain English.
-    3. Falls back to bullet formatter if generation fails.
+    2. Sends to Groq (free Llama 3) to rewrite into plain English.
+    3. Falls back to bullet formatter if Groq call fails.
     """
     if retrieved is None or retrieved.empty:
         return (
@@ -529,17 +530,16 @@ def generate_answer(question: str, retrieved) -> str:
             "📞 +256 (0)414 532 631 · 📧 gendermainstreaming@mak.ac.ug"
         )
 
-    # Build raw policy context from top 3 retrieved chunks (flan-t5 has limited context)
-    top_chunks = retrieved.head(3)
+    # Build raw policy context from all retrieved chunks
     raw_policy_text = "\n\n".join(
         f"[Source: {nice_source_name(row['source_document'])}]\n{row['text'].strip()}"
-        for _, row in top_chunks.iterrows()
+        for _, row in retrieved.iterrows()
     )
 
-    # Try flan-t5 local generation first
-    polished = polish_with_flan(question, raw_policy_text)
+    # Try Groq first
+    polished = polish_with_groq(question, raw_policy_text)
     if polished:
-        return format_as_bullets(polished)
+        return polished
 
     # Fallback to bullet formatter
     return format_chunks_as_bullets(retrieved, query=question)
@@ -861,16 +861,9 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Load embedding model + chunks (flan-t5 loads lazily on first question)
+# Load embedding model + chunks
 with st.spinner("Loading policy documents — first run takes a moment…"):
     df, embeddings, emb_model = load_everything()
-
-# Pre-warm flan-t5 in background so first answer isn't slow
-with st.spinner("Loading answer generation model (flan-t5-large) — this takes ~1 min on first run…"):
-    try:
-        load_generator()
-    except Exception as e:
-        st.warning(f"Answer model could not load ({e}). Will use fallback formatter.")
 
 active_conv = get_active_conv()
 
