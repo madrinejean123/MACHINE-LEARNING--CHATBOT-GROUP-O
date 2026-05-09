@@ -1,0 +1,14 @@
+gradio>=4.0.0
+transformers==4.40.0
+sentence-transformers==2.7.0
+huggingface_hub==0.34.0
+torch
+scikit-learn
+PyPDF2
+nltk
+gTTS
+requests
+numpy
+pandas
+pdf2image
+pytesseract
