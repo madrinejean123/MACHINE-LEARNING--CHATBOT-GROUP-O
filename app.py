@@ -64,7 +64,7 @@ GREETING_RESPONSE = (
     "What would you like to know?"
 )
 
-SUGGESTED_QUESTIONS = [
+SUGGESTIONS = [
     "How do I report harassment?",
     "Rights for students with disabilities",
     "How do I file a complaint?",
@@ -216,9 +216,7 @@ def expand_query(query):
         if trigger in q_lower:
             extras.update(expansion.split())
     if extras:
-        expanded = query + " " + " ".join(extras)
-        print(f"Query expanded: {expanded[:120]}")
-        return expanded
+        return query + " " + " ".join(extras)
     return query
 
 
@@ -278,43 +276,34 @@ def is_greeting(text):
     return cleaned in GREETINGS or (len(words) <= 3 and words[0] in GREETINGS)
 
 
-# ── UPDATED: clean_sentence ──────────────────────────────────────────────────
 def clean_sentence(s):
-    """Clean up a single policy sentence for display."""
-    # Fix OCR mid-word spaces: "unsur e" → "unsure", "c omplaints" → "complaints"
     s = re.sub(
         r'\b([a-zA-Z]{2,})\s([a-z]{1,3})\b',
         lambda m: m.group(1) + m.group(2) if m.group(2) not in STOP_WORDS else m.group(0),
         s
     )
-    # Remove letter/number list prefixes: (a) a) 1. i.
     s = re.sub(r'^\s*[\(\[]?[a-zA-Z0-9]+[\)\]\.]\s*', '', s)
-    # Fix broken hyphenated words: "har- assment" → "harassment"
     s = re.sub(r'(\w+)-\s+(\w+)', r'\1\2', s)
-    # Collapse whitespace
     s = re.sub(r'\s+', ' ', s)
     return s.strip()
 
 
-# ── UPDATED: split_into_sentences ────────────────────────────────────────────
 def split_into_sentences(text):
-    """Split chunk text into clean, deduplicated sentences."""
-    raw = re.split(r'(?<=[.!?])\s+', text)
+    raw  = re.split(r'(?<=[.!?])\s+', text)
     seen = set()
     sentences = []
     for s in raw:
-        s = clean_sentence(s)
-        if len(s.split()) < 6:           # skip very short fragments
+        s   = clean_sentence(s)
+        if len(s.split()) < 6:
             continue
         key = re.sub(r'\s+', ' ', s.lower().strip())
-        if key in seen:                  # deduplicate
+        if key in seen:
             continue
         seen.add(key)
         sentences.append(s)
     return sentences
 
 
-# Sentences that are background/principles only — not actionable
 SKIP_PHRASES = [
     "there is no documented",
     "current evidence",
@@ -327,15 +316,11 @@ SKIP_PHRASES = [
 ]
 
 
-# ── UPDATED: format_chunks_as_bullets ────────────────────────────────────────
+def nice_source_name(raw):
+    return raw.replace(".pdf", "").replace("-", " ").replace("_", " ").strip()
+
+
 def format_chunks_as_bullets(retrieved, query=""):
-    """
-    Format retrieved policy chunks into clearly organised bullet answers.
-    - One section per source document
-    - Actionable/procedure sentences prioritised
-    - Background/definition sentences filtered out
-    - No OCR garbage, no duplicates
-    """
     ACTION_WORDS = {
         "report", "lodge", "file", "contact", "collect", "document",
         "record", "seek", "notify", "submit", "communicate", "keep",
@@ -345,44 +330,33 @@ def format_chunks_as_bullets(retrieved, query=""):
         "can", "will", "shall", "ensure", "provide", "receive",
     }
 
-    # Group chunks by source document
     grouped = {}
     for _, row in retrieved.iterrows():
         src = nice_source_name(row["source_document"])
         grouped.setdefault(src, []).append(row["text"].strip())
 
-    parts = []
+    parts        = []
     total_bullets = 0
 
     for src, texts in grouped.items():
         combined  = " ".join(texts)
-        sentences = split_into_sentences(combined)  # already deduplicated
-
-        # Filter out background/principle sentences
-        sentences = [
-            s for s in sentences
-            if not any(p in s.lower() for p in SKIP_PHRASES)
-        ]
+        sentences = split_into_sentences(combined)
+        sentences = [s for s in sentences if not any(p in s.lower() for p in SKIP_PHRASES)]
 
         if not sentences:
             continue
 
-        # Score: action sentences score higher
         scored = []
         for s in sentences:
-            s_lower = s.lower()
-            score   = sum(1 for w in ACTION_WORDS if w in s_lower)
+            score = sum(1 for w in ACTION_WORDS if w in s.lower())
             scored.append((score, s))
 
-        # Sort by score descending, keep top 8 per source
         scored.sort(key=lambda x: x[0], reverse=True)
         top = [s for _, s in scored[:8]]
 
-        # Restore reading order
         order = {s: i for i, s in enumerate(sentences)}
         top.sort(key=lambda s: order.get(s, 999))
 
-        # Write section
         parts.append(f"\n**📋 {src}**\n")
         for s in top:
             if not s.endswith(('.', '!', '?')):
@@ -396,19 +370,11 @@ def format_chunks_as_bullets(retrieved, query=""):
             "Please contact the **Directorate of Gender Mainstreaming** directly for guidance."
         )
 
-    # Intro line using the user's query
-    header = ""
-    if query:
-        header = f"Here is what the policies say about **{query.strip()}**:\n\n"
-
+    header = f"Here is what the policies say about **{query.strip()}**:\n\n" if query else ""
     return header + "\n".join(parts)
 
 
-# ── UPDATED: generate_answer — passes query through ──────────────────────────
 def generate_answer(query, retrieved):
-    """
-    Directly format retrieved policy chunks into a clean, readable answer.
-    """
     if retrieved is None or retrieved.empty:
         return (
             "I could not find specific information about that in the policy documents. "
@@ -437,25 +403,7 @@ def apply_simplified_language(text):
 
 
 def format_response(answer):
-    """Answer is already formatted by format_chunks_as_bullets — just return it."""
     return apply_simplified_language(answer)
-
-
-def format_fallback(retrieved):
-    return format_chunks_as_bullets(retrieved)
-
-
-def nice_source_name(raw):
-    return raw.replace(".pdf", "").replace("-", " ").replace("_", " ").strip()
-
-
-def get_chat_title(messages):
-    """Generate a short title from the first user message."""
-    for msg in messages:
-        if msg["role"] == "user":
-            text = msg["content"][:50]
-            return text if len(msg["content"]) <= 50 else text + "…"
-    return "New conversation"
 
 
 # ---------------------------------------------------------------------------
@@ -475,17 +423,15 @@ _EMBED_PATH = os.path.join(_CACHE_DIR, "chunk_embeddings.npy")
 
 
 def _download_if_missing(url, local_path):
-    """Always re-download to ensure latest file from GitHub is used."""
     if os.path.exists(local_path):
         os.remove(local_path)
-        print(f"↻ Refreshing {os.path.basename(local_path)} (deleted old cache) …")
-    print(f"↓ Downloading {os.path.basename(local_path)} from GitHub …")
+    print(f"↓ Downloading {os.path.basename(local_path)} …")
     try:
         r = requests.get(url, timeout=120)
         r.raise_for_status()
         with open(local_path, "wb") as f:
             f.write(r.content)
-        print(f"  ✓ Saved ({len(r.content)//1024} KB) → {local_path}")
+        print(f"  ✓ Saved ({len(r.content)//1024} KB)")
         return True
     except Exception as e:
         print(f"  ✗ Failed: {e}")
@@ -509,12 +455,11 @@ def load_everything():
     print(f"✓ Loaded {len(df)} chunks, embeddings shape {embeddings.shape}")
 
     emb_model = SentenceTransformer("all-MiniLM-L6-v2")
-
     return df, embeddings, emb_model
 
 
 # ---------------------------------------------------------------------------
-# PAGE CONFIG
+# STEP 1 — page config (must be very first Streamlit call)
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
@@ -525,15 +470,30 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# GLOBAL CSS
+# STEP 2 — session state init (must happen before ANY st.session_state read)
 # ---------------------------------------------------------------------------
 
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
+
+if "contrast" not in st.session_state:
+    st.session_state.contrast = 100
+
+if "conversations" not in st.session_state:
+    st.session_state.conversations = []
+
+if "active_conv_id" not in st.session_state:
+    st.session_state.active_conv_id = None
+
+if "suggested_query" not in st.session_state:
+    st.session_state.suggested_query = None
+
 # ---------------------------------------------------------------------------
-# DYNAMIC CSS  (dark / light + contrast)
+# STEP 3 — now safe to read session state for CSS
 # ---------------------------------------------------------------------------
 
-_dark  = st.session_state.dark_mode
-_cont  = st.session_state.contrast / 100   # 0.5 – 1.5
+_dark = st.session_state.dark_mode
+_cont = st.session_state.contrast / 100   # 0.5 – 1.5
 
 if _dark:
     BG        = "#0d1117"
@@ -601,7 +561,7 @@ html, body, [class*="css"] {{
     display: flex; align-items: center; justify-content: center;
     font-size: 22px; flex-shrink: 0;
 }}
-.main-title {{ font-family: 'Playfair Display', serif; font-size: 1.15rem; }}
+.main-title {{ font-family: 'Playfair Display', serif; font-size: 1.15rem; color: {TEXT}; }}
 .main-sub   {{ font-size: 0.7rem; color: {SUBTEXT}; margin-top: 2px; }}
 .online-badge {{
     margin-left: auto; font-size: 0.68rem; padding: 4px 12px;
@@ -612,22 +572,12 @@ html, body, [class*="css"] {{
 .welcome-card {{ text-align: center; padding: 40px 16px 28px; }}
 .welcome-card h2 {{
     font-family: 'Playfair Display', serif;
-    font-size: 1.7rem; margin-bottom: 12px;
+    font-size: 1.7rem; margin-bottom: 12px; color: {TEXT};
 }}
 .welcome-card p {{
     color: {SUBTEXT}; font-size: 0.88rem;
     line-height: 1.8; max-width: 500px; margin: 0 auto;
 }}
-.pill-row {{
-    display: flex; flex-wrap: wrap; gap: 8px;
-    justify-content: center; margin-top: 24px;
-}}
-.pill {{
-    font-size: 0.78rem; padding: 9px 18px; border-radius: 20px;
-    background: {CARD}; border: 1px solid {INPUT_BOR}; color: {SUBTEXT};
-    cursor: pointer; transition: border-color .2s, color .2s;
-}}
-.pill:hover {{ border-color: #58a6ff; color: #58a6ff; }}
 
 .src-tag {{
     display: inline-block; margin: 4px 4px 0 0;
@@ -659,33 +609,12 @@ html, body, [class*="css"] {{
     border: none !important; padding: 4px 0 !important;
 }}
 hr {{ border-color: {BORDER} !important; }}
-[data-testid="stSpinner"] {{ color: #58a6ff !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-
 # ---------------------------------------------------------------------------
-# SESSION STATE INIT
+# STEP 4 — conversation helpers (after session state is ready)
 # ---------------------------------------------------------------------------
-
-if "conversations" not in st.session_state:
-    st.session_state.conversations = []
-
-if "active_conv_id" not in st.session_state:
-    st.session_state.active_conv_id = None
-
-if "pending_input" not in st.session_state:
-    st.session_state.pending_input = None
-
-if "suggested_query" not in st.session_state:
-    st.session_state.suggested_query = None
-
-if "dark_mode" not in st.session_state:
-    st.session_state.dark_mode = True
-
-if "contrast" not in st.session_state:
-    st.session_state.contrast = 100
-
 
 def new_conversation():
     conv_id = str(int(time.time() * 1000))
@@ -709,7 +638,6 @@ if not st.session_state.conversations:
     new_conversation()
 if st.session_state.active_conv_id is None and st.session_state.conversations:
     st.session_state.active_conv_id = st.session_state.conversations[0]["id"]
-
 
 # ---------------------------------------------------------------------------
 # SIDEBAR
@@ -736,22 +664,13 @@ with st.sidebar:
         st.markdown('<div style="font-size:0.78rem;padding:8px 0;">No conversations yet.</div>', unsafe_allow_html=True)
     else:
         for conv in st.session_state.conversations:
-            label = conv["title"]
-            clicked = st.button(
-                f"💬  {label}",
-                key=f"conv_{conv['id']}",
-                use_container_width=True,
-            )
-            if clicked:
+            if st.button(f"💬  {conv['title']}", key=f"conv_{conv['id']}", use_container_width=True):
                 st.session_state.active_conv_id = conv["id"]
                 st.rerun()
 
     st.markdown("---")
-
-    # ── Settings panel ───────────────────────────────────────────────────────
     st.markdown('<div class="sidebar-section-label">⚙️ Settings</div>', unsafe_allow_html=True)
 
-    # Dark / Light toggle
     mode_label = "🌙 Dark mode" if st.session_state.dark_mode else "☀️ Light mode"
     if st.toggle(mode_label, value=st.session_state.dark_mode, key="theme_toggle"):
         if not st.session_state.dark_mode:
@@ -762,7 +681,6 @@ with st.sidebar:
             st.session_state.dark_mode = False
             st.rerun()
 
-    # Contrast slider
     st.markdown('<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;">🔆 Contrast</div>', unsafe_allow_html=True)
     new_contrast = st.slider(
         label="contrast_slider",
@@ -780,17 +698,16 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div style="font-size:0.68rem;line-height:1.6;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
 
-
 # ---------------------------------------------------------------------------
 # MAIN CONTENT
 # ---------------------------------------------------------------------------
 
-st.markdown("""
+st.markdown(f"""
 <div class="main-header">
   <div class="main-logo">🛡️</div>
   <div>
     <div class="main-title">Safeguarding Companion</div>
-    <div class="main-sub">Makerere University · Policy Q&A</div>
+    <div class="main-sub">Makerere University · Policy Q&amp;A</div>
   </div>
   <div class="online-badge">● Online</div>
 </div>
@@ -801,15 +718,7 @@ with st.spinner("Loading policy documents and models — first run takes a minut
 
 active_conv = get_active_conv()
 
-# ── Welcome screen with clickable suggestion buttons ────────────────────────
-SUGGESTIONS = [
-    "How do I report harassment?",
-    "Rights for students with disabilities",
-    "How do I file a complaint?",
-    "What is the HIV/AIDS policy?",
-    "Support for persons with disabilities",
-]
-
+# ── Welcome screen
 if active_conv and not active_conv["messages"]:
     st.markdown("""
     <div class="welcome-card">
@@ -821,7 +730,6 @@ if active_conv and not active_conv["messages"]:
     </div>
     """, unsafe_allow_html=True)
 
-    # Render suggestions as real Streamlit buttons in a row
     cols = st.columns(len(SUGGESTIONS))
     for col, suggestion in zip(cols, SUGGESTIONS):
         with col:
@@ -829,7 +737,7 @@ if active_conv and not active_conv["messages"]:
                 st.session_state.suggested_query = suggestion
                 st.rerun()
 
-# ── Render chat history ──────────────────────────────────────────────────────
+# ── Chat history
 if active_conv:
     for msg in active_conv["messages"]:
         with st.chat_message(msg["role"], avatar="🛡️" if msg["role"] == "assistant" else "🧑"):
@@ -839,10 +747,8 @@ if active_conv:
 # CHAT INPUT
 # ---------------------------------------------------------------------------
 
-# Pick up a suggestion click OR normal typed input
 user_input = st.chat_input("Ask anything about university policies…")
 
-# If a suggestion pill was clicked, use that as the input
 if st.session_state.suggested_query and not user_input:
     user_input = st.session_state.suggested_query
     st.session_state.suggested_query = None
