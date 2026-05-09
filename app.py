@@ -528,153 +528,138 @@ st.set_page_config(
 # GLOBAL CSS
 # ---------------------------------------------------------------------------
 
-st.markdown("""
+# ---------------------------------------------------------------------------
+# DYNAMIC CSS  (dark / light + contrast)
+# ---------------------------------------------------------------------------
+
+_dark  = st.session_state.dark_mode
+_cont  = st.session_state.contrast / 100   # 0.5 – 1.5
+
+if _dark:
+    BG        = "#0d1117"
+    SIDEBAR   = "#161b22"
+    BORDER    = "#21262d"
+    CARD      = "#1c2128"
+    TEXT      = f"rgba(230,237,243,{min(_cont,1)})"
+    SUBTEXT   = f"rgba(139,148,158,{min(_cont,1)})"
+    INPUT_BG  = "#1c2128"
+    INPUT_BOR = "#30363d"
+else:
+    BG        = "#ffffff"
+    SIDEBAR   = "#f6f8fa"
+    BORDER    = "#d0d7de"
+    CARD      = "#f0f2f5"
+    TEXT      = f"rgba(31,35,40,{min(_cont,1)})"
+    SUBTEXT   = f"rgba(87,96,106,{min(_cont,1)})"
+    INPUT_BG  = "#ffffff"
+    INPUT_BOR = "#d0d7de"
+
+st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
-/* ── Reset & base ── */
-html, body, [class*="css"] {
+html, body, [class*="css"] {{
     font-family: 'Sora', sans-serif !important;
-    background-color: #0d1117 !important;
-    color: #e6edf3 !important;
-}
-#MainMenu, footer, header { visibility: hidden; }
+    background-color: {BG} !important;
+    color: {TEXT} !important;
+    filter: contrast({_cont});
+}}
+#MainMenu, footer, header {{ visibility: hidden; }}
 
-/* ── Sidebar ── */
-[data-testid="stSidebar"] {
-    background-color: #161b22 !important;
-    border-right: 1px solid #21262d !important;
-}
-[data-testid="stSidebar"] * { color: #c9d1d9 !important; }
+[data-testid="stSidebar"] {{
+    background-color: {SIDEBAR} !important;
+    border-right: 1px solid {BORDER} !important;
+}}
+[data-testid="stSidebar"] * {{ color: {TEXT} !important; }}
 
-.sidebar-logo {
+.sidebar-logo {{
     display: flex; align-items: center; gap: 10px;
-    padding: 4px 0 20px;
-    border-bottom: 1px solid #21262d;
-    margin-bottom: 16px;
-}
-.sidebar-logo-icon {
+    padding: 4px 0 20px; border-bottom: 1px solid {BORDER}; margin-bottom: 16px;
+}}
+.sidebar-logo-icon {{
     width: 34px; height: 34px; border-radius: 10px;
     background: linear-gradient(135deg,#238636,#1f6feb);
     display: flex; align-items: center; justify-content: center;
     font-size: 18px; flex-shrink: 0;
-}
-.sidebar-logo-text { font-size: 0.9rem; font-weight: 600; color: #e6edf3 !important; }
-.sidebar-logo-sub  { font-size: 0.65rem; color: #8b949e !important; }
+}}
+.sidebar-logo-text {{ font-size: 0.9rem; font-weight: 600; }}
+.sidebar-logo-sub  {{ font-size: 0.65rem; color: {SUBTEXT} !important; }}
 
-.sidebar-section-label {
+.sidebar-section-label {{
     font-size: 0.65rem; font-weight: 600; letter-spacing: .08em;
-    text-transform: uppercase; color: #8b949e !important;
-    padding: 12px 0 6px; margin-bottom: 2px;
-}
+    text-transform: uppercase; color: {SUBTEXT} !important;
+    padding: 12px 0 6px;
+}}
 
-.history-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 12px; border-radius: 10px; cursor: pointer;
-    border: 1px solid transparent; margin-bottom: 3px;
-    transition: background .15s;
-    background: transparent;
-}
-.history-item:hover { background: #1c2128; border-color: #30363d; }
-.history-item.active { background: #1c2128; border-color: #1f6feb44; }
-.history-item-icon  { font-size: 0.85rem; flex-shrink: 0; }
-.history-item-text  { font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c9d1d9 !important; }
-.history-item-time  { font-size: 0.62rem; color: #8b949e !important; margin-top: 1px; }
-
-.new-chat-btn {
-    display: flex; align-items: center; justify-content: center; gap: 8px;
-    width: 100%; padding: 10px; border-radius: 10px;
-    background: linear-gradient(135deg,#238636,#1f6feb);
-    color: #fff !important; font-size: 0.85rem; font-weight: 600;
-    border: none; cursor: pointer; margin-bottom: 20px;
-    transition: opacity .2s;
-}
-.new-chat-btn:hover { opacity: .88; }
-
-/* ── Main area ── */
-.main-header {
+.main-header {{
     display: flex; align-items: center; gap: 14px;
-    padding: 0 0 18px;
-    border-bottom: 1px solid #21262d;
-    margin-bottom: 24px;
-}
-.main-logo {
+    padding: 0 0 18px; border-bottom: 1px solid {BORDER}; margin-bottom: 24px;
+}}
+.main-logo {{
     width: 42px; height: 42px; border-radius: 12px;
     background: linear-gradient(135deg,#238636,#1f6feb);
     display: flex; align-items: center; justify-content: center;
     font-size: 22px; flex-shrink: 0;
-}
-.main-title {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.15rem; color: #e6edf3;
-}
-.main-sub { font-size: 0.7rem; color: #8b949e; margin-top: 2px; }
-.online-badge {
+}}
+.main-title {{ font-family: 'Playfair Display', serif; font-size: 1.15rem; }}
+.main-sub   {{ font-size: 0.7rem; color: {SUBTEXT}; margin-top: 2px; }}
+.online-badge {{
     margin-left: auto; font-size: 0.68rem; padding: 4px 12px;
     border-radius: 20px; background: rgba(35,134,54,0.15);
     color: #3fb950; border: 1px solid rgba(63,185,80,0.3);
-}
+}}
 
-/* ── Welcome ── */
-.welcome-card { text-align: center; padding: 40px 16px 28px; }
-.welcome-card h2 {
+.welcome-card {{ text-align: center; padding: 40px 16px 28px; }}
+.welcome-card h2 {{
     font-family: 'Playfair Display', serif;
-    font-size: 1.7rem; color: #e6edf3; margin-bottom: 12px;
-}
-.welcome-card p {
-    color: #8b949e; font-size: 0.88rem;
+    font-size: 1.7rem; margin-bottom: 12px;
+}}
+.welcome-card p {{
+    color: {SUBTEXT}; font-size: 0.88rem;
     line-height: 1.8; max-width: 500px; margin: 0 auto;
-}
-.pill-row {
+}}
+.pill-row {{
     display: flex; flex-wrap: wrap; gap: 8px;
     justify-content: center; margin-top: 24px;
-}
-.pill {
+}}
+.pill {{
     font-size: 0.78rem; padding: 9px 18px; border-radius: 20px;
-    background: #161b22; border: 1px solid #30363d; color: #8b949e;
+    background: {CARD}; border: 1px solid {INPUT_BOR}; color: {SUBTEXT};
     cursor: pointer; transition: border-color .2s, color .2s;
-}
-.pill:hover { border-color: #58a6ff; color: #58a6ff; }
+}}
+.pill:hover {{ border-color: #58a6ff; color: #58a6ff; }}
 
-/* ── Source tags ── */
-.src-tag {
+.src-tag {{
     display: inline-block; margin: 4px 4px 0 0;
     font-size: 0.68rem; padding: 3px 10px; border-radius: 20px;
     background: rgba(31,111,235,.12); color: #58a6ff;
     border: 1px solid rgba(88,166,255,.2);
-}
+}}
 
-/* ── Chat input ── */
-[data-testid="stChatInput"] textarea {
-    background: #1c2128 !important;
-    border: 1.5px solid #30363d !important;
+[data-testid="stChatInput"] textarea {{
+    background: {INPUT_BG} !important;
+    border: 1.5px solid {INPUT_BOR} !important;
     border-radius: 28px !important;
-    color: #e6edf3 !important;
+    color: {TEXT} !important;
     font-family: 'Sora', sans-serif !important;
     font-size: 0.95rem !important;
     padding: 14px 20px !important;
-}
-[data-testid="stChatInput"] textarea:focus {
+}}
+[data-testid="stChatInput"] textarea:focus {{
     border-color: #58a6ff !important;
     box-shadow: 0 0 0 3px rgba(88,166,255,.1) !important;
-}
-[data-testid="stChatInput"] button {
+}}
+[data-testid="stChatInput"] button {{
     background: linear-gradient(135deg,#238636,#1f6feb) !important;
     border-radius: 50% !important; border: none !important;
-}
+}}
 
-/* ── Message bubbles ── */
-[data-testid="stChatMessage"] {
+[data-testid="stChatMessage"] {{
     background: transparent !important;
-    border: none !important;
-    padding: 4px 0 !important;
-}
-
-/* ── Divider ── */
-hr { border-color: #21262d !important; }
-
-/* ── Spinner ── */
-[data-testid="stSpinner"] { color: #58a6ff !important; }
+    border: none !important; padding: 4px 0 !important;
+}}
+hr {{ border-color: {BORDER} !important; }}
+[data-testid="stSpinner"] {{ color: #58a6ff !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -691,6 +676,15 @@ if "active_conv_id" not in st.session_state:
 
 if "pending_input" not in st.session_state:
     st.session_state.pending_input = None
+
+if "suggested_query" not in st.session_state:
+    st.session_state.suggested_query = None
+
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
+
+if "contrast" not in st.session_state:
+    st.session_state.contrast = 100
 
 
 def new_conversation():
@@ -739,12 +733,10 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section-label">Recent chats</div>', unsafe_allow_html=True)
 
     if not st.session_state.conversations:
-        st.markdown('<div style="font-size:0.78rem;color:#8b949e;padding:8px 0;">No conversations yet.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:0.78rem;padding:8px 0;">No conversations yet.</div>', unsafe_allow_html=True)
     else:
         for conv in st.session_state.conversations:
-            is_active = conv["id"] == st.session_state.active_conv_id
             label = conv["title"]
-
             clicked = st.button(
                 f"💬  {label}",
                 key=f"conv_{conv['id']}",
@@ -755,7 +747,38 @@ with st.sidebar:
                 st.rerun()
 
     st.markdown("---")
-    st.markdown('<div style="font-size:0.68rem;color:#8b949e;line-height:1.6;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
+
+    # ── Settings panel ───────────────────────────────────────────────────────
+    st.markdown('<div class="sidebar-section-label">⚙️ Settings</div>', unsafe_allow_html=True)
+
+    # Dark / Light toggle
+    mode_label = "🌙 Dark mode" if st.session_state.dark_mode else "☀️ Light mode"
+    if st.toggle(mode_label, value=st.session_state.dark_mode, key="theme_toggle"):
+        if not st.session_state.dark_mode:
+            st.session_state.dark_mode = True
+            st.rerun()
+    else:
+        if st.session_state.dark_mode:
+            st.session_state.dark_mode = False
+            st.rerun()
+
+    # Contrast slider
+    st.markdown('<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;">🔆 Contrast</div>', unsafe_allow_html=True)
+    new_contrast = st.slider(
+        label="contrast_slider",
+        min_value=50,
+        max_value=150,
+        value=st.session_state.contrast,
+        step=5,
+        label_visibility="collapsed",
+        key="contrast_slider",
+    )
+    if new_contrast != st.session_state.contrast:
+        st.session_state.contrast = new_contrast
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown('<div style="font-size:0.68rem;line-height:1.6;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -778,6 +801,15 @@ with st.spinner("Loading policy documents and models — first run takes a minut
 
 active_conv = get_active_conv()
 
+# ── Welcome screen with clickable suggestion buttons ────────────────────────
+SUGGESTIONS = [
+    "How do I report harassment?",
+    "Rights for students with disabilities",
+    "How do I file a complaint?",
+    "What is the HIV/AIDS policy?",
+    "Support for persons with disabilities",
+]
+
 if active_conv and not active_conv["messages"]:
     st.markdown("""
     <div class="welcome-card">
@@ -786,16 +818,18 @@ if active_conv and not active_conv["messages"]:
       <p>Ask me anything about Makerere University's safeguarding policies,
       disability rights, sexual harassment procedures, and student protections.
       All answers come from official policy documents.</p>
-      <div class="pill-row">
-        <span class="pill">How do I report harassment?</span>
-        <span class="pill">Rights for students with disabilities</span>
-        <span class="pill">How do I file a complaint?</span>
-        <span class="pill">What is the HIV/AIDS policy?</span>
-        <span class="pill">Support for persons with disabilities</span>
-      </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # Render suggestions as real Streamlit buttons in a row
+    cols = st.columns(len(SUGGESTIONS))
+    for col, suggestion in zip(cols, SUGGESTIONS):
+        with col:
+            if st.button(suggestion, use_container_width=True, key=f"sug_{suggestion[:20]}"):
+                st.session_state.suggested_query = suggestion
+                st.rerun()
+
+# ── Render chat history ──────────────────────────────────────────────────────
 if active_conv:
     for msg in active_conv["messages"]:
         with st.chat_message(msg["role"], avatar="🛡️" if msg["role"] == "assistant" else "🧑"):
@@ -805,7 +839,13 @@ if active_conv:
 # CHAT INPUT
 # ---------------------------------------------------------------------------
 
+# Pick up a suggestion click OR normal typed input
 user_input = st.chat_input("Ask anything about university policies…")
+
+# If a suggestion pill was clicked, use that as the input
+if st.session_state.suggested_query and not user_input:
+    user_input = st.session_state.suggested_query
+    st.session_state.suggested_query = None
 
 if user_input and active_conv:
     with st.chat_message("user", avatar="🧑"):
@@ -818,7 +858,6 @@ if user_input and active_conv:
 
     with st.chat_message("assistant", avatar="🛡️"):
         with st.spinner("Searching policy documents…"):
-
             if is_greeting(user_input):
                 answer    = GREETING_RESPONSE
                 sources   = []
