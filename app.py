@@ -267,13 +267,90 @@ def retrieve_top_k(query, model, embeddings, df, k=TOP_K, threshold=SIMILARITY_T
 
 
 # ---------------------------------------------------------------------------
-# GENERATION
+# AI POLISHING  (HuggingFace free Inference API)
+# ---------------------------------------------------------------------------
+
+# Get HF token from environment (set as Space secret called HF_TOKEN)
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+
+# We use Mistral-7B-Instruct — free on HF Inference API, great at following instructions
+HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+
+
+def polish_with_ai(question: str, raw_policy_text: str) -> str:
+    """
+    Sends raw retrieved policy chunks to Mistral via HuggingFace free API.
+    Mistral rewrites them into a clean, friendly answer using ONLY the policy content.
+    Returns the polished string, or None if the call fails.
+    """
+    if not HF_TOKEN:
+        print("No HF_TOKEN found — skipping AI polish.")
+        return None
+
+    # Build the prompt in Mistral instruct format
+    prompt = f"""<s>[INST] You are a helpful university safeguarding assistant for Makerere University students.
+
+A student asked: "{question}"
+
+Here is the raw policy text retrieved from official documents (it may contain OCR errors like merged words):
+---
+{raw_policy_text[:2000]}
+---
+
+Your task:
+1. Fix any OCR errors (e.g. "mustbe" -> "must be", "Directorateof" -> "Directorate of", "togo" -> "to go").
+2. Rewrite the answer in plain simple English any student can understand.
+3. If it describes steps, use a numbered list (1. 2. 3.).
+4. If it is general information, use clear bullet points.
+5. Use ONLY information from the policy text above. Do not add anything extra.
+6. Keep it concise and remove repeated sentences.
+7. End with: "For more help, contact the Directorate of Gender Mainstreaming."
+
+Write the answer now: [/INST]"""
+
+    try:
+        response = requests.post(
+            HF_API_URL,
+            headers={"Authorization": f"Bearer {HF_TOKEN}"},
+            json={
+                "inputs": prompt,
+                "parameters": {
+                    "max_new_tokens": 600,
+                    "temperature": 0.3,
+                    "do_sample": False,
+                    "return_full_text": False,
+                },
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract generated text
+        if isinstance(data, list) and len(data) > 0:
+            generated = data[0].get("generated_text", "").strip()
+            if generated:
+                return generated
+
+        return None
+
+    except Exception as e:
+        print(f"HF AI polish failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# FALLBACK FORMATTER  (used when AI call fails)
 # ---------------------------------------------------------------------------
 
 def is_greeting(text):
     cleaned = text.strip().lower().rstrip("!.,?")
     words   = cleaned.split()
     return cleaned in GREETINGS or (len(words) <= 3 and words[0] in GREETINGS)
+
+
+def nice_source_name(raw):
+    return raw.replace(".pdf", "").replace("-", " ").replace("_", " ").strip()
 
 
 def clean_sentence(s):
@@ -293,7 +370,7 @@ def split_into_sentences(text):
     seen = set()
     sentences = []
     for s in raw:
-        s   = clean_sentence(s)
+        s = clean_sentence(s)
         if len(s.split()) < 6:
             continue
         key = re.sub(r'\s+', ' ', s.lower().strip())
@@ -305,22 +382,14 @@ def split_into_sentences(text):
 
 
 SKIP_PHRASES = [
-    "there is no documented",
-    "current evidence",
-    "principles underpinning",
-    "it should be noted",
-    "as quasi-judicial",
-    "no current evidence",
-    "standard procedures concerning",
-    "enjoy relative flexibility",
+    "there is no documented", "current evidence", "principles underpinning",
+    "it should be noted", "as quasi-judicial", "no current evidence",
+    "standard procedures concerning", "enjoy relative flexibility",
 ]
 
 
-def nice_source_name(raw):
-    return raw.replace(".pdf", "").replace("-", " ").replace("_", " ").strip()
-
-
 def format_chunks_as_bullets(retrieved, query=""):
+    """Fallback formatter when AI polishing is unavailable."""
     ACTION_WORDS = {
         "report", "lodge", "file", "contact", "collect", "document",
         "record", "seek", "notify", "submit", "communicate", "keep",
@@ -335,25 +404,19 @@ def format_chunks_as_bullets(retrieved, query=""):
         src = nice_source_name(row["source_document"])
         grouped.setdefault(src, []).append(row["text"].strip())
 
-    parts        = []
+    parts         = []
     total_bullets = 0
 
     for src, texts in grouped.items():
         combined  = " ".join(texts)
         sentences = split_into_sentences(combined)
         sentences = [s for s in sentences if not any(p in s.lower() for p in SKIP_PHRASES)]
-
         if not sentences:
             continue
 
-        scored = []
-        for s in sentences:
-            score = sum(1 for w in ACTION_WORDS if w in s.lower())
-            scored.append((score, s))
-
+        scored = [(sum(1 for w in ACTION_WORDS if w in s.lower()), s) for s in sentences]
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = [s for _, s in scored[:8]]
-
+        top   = [s for _, s in scored[:8]]
         order = {s: i for i, s in enumerate(sentences)}
         top.sort(key=lambda s: order.get(s, 999))
 
@@ -366,50 +429,53 @@ def format_chunks_as_bullets(retrieved, query=""):
 
     if total_bullets == 0:
         return (
-            "I found related policy sections but could not extract clear actionable steps.\n\n"
-            "**Please reach out directly:**\n\n"
-            "**Directorate of Gender Mainstreaming**\n"
-            "- 📍 Frank Kalimuzo Central Teaching Facility, Makerere University\n"
-            "- 📞 +256 (0)414 532 631\n"
-            "- 📧 gendermainstreaming@mak.ac.ug\n\n"
-            "**Office of the Dean of Students**\n"
-            "- 📞 +256 (0)414 531 543\n"
-            "- 📧 deanofstudents@mak.ac.ug\n\n"
-            "Both offices are open **Monday to Friday, 8 AM – 5 PM**."
+            "I found related policy sections but could not extract clear steps.\n\n"
+            "Please contact the **Directorate of Gender Mainstreaming** directly.\n"
+            "📞 +256 (0)414 532 631 · 📧 gendermainstreaming@mak.ac.ug"
         )
 
     header = f"Here is what the policies say about **{query.strip()}**:\n\n" if query else ""
     return header + "\n".join(parts)
 
 
-def generate_answer(query, retrieved):
+# ---------------------------------------------------------------------------
+# MAIN ANSWER GENERATOR
+# ---------------------------------------------------------------------------
+
+def generate_answer(question: str, retrieved) -> str:
+    """
+    1. Collects raw text from retrieved policy chunks.
+    2. Sends to Mistral (free HF API) to rewrite into a clean friendly answer.
+    3. Falls back to bullet formatter if the API call fails.
+    """
     if retrieved is None or retrieved.empty:
         return (
-            "I could not find specific information about that in the policy documents. "
-            "Please try rephrasing your question.\n\n"
-            "**Or contact directly:**\n\n"
-            "**Directorate of Gender Mainstreaming**\n"
-            "- 📞 +256 (0)414 532 631\n"
-            "- 📧 gendermainstreaming@mak.ac.ug\n\n"
-            "**Office of the Dean of Students**\n"
-            "- 📞 +256 (0)414 531 543\n"
-            "- 📧 deanofstudents@mak.ac.ug"
+            "I could not find specific information about that in the policy documents.\n\n"
+            "Please contact the **Directorate of Gender Mainstreaming** directly:\n"
+            "📞 +256 (0)414 532 631 · 📧 gendermainstreaming@mak.ac.ug"
         )
-    return format_chunks_as_bullets(retrieved, query=query)
+
+    # Build raw policy context from retrieved chunks
+    raw_policy_text = "\n\n".join(
+        f"[Source: {nice_source_name(row['source_document'])}]\n{row['text'].strip()}"
+        for _, row in retrieved.iterrows()
+    )
+
+    # Try AI polishing first
+    polished = polish_with_ai(question, raw_policy_text)
+    if polished:
+        return polished
+
+    # Fallback to bullet formatter
+    return format_chunks_as_bullets(retrieved, query=question)
 
 
 def apply_simplified_language(text):
     replacements = {
-        "pursuant to":    "according to",
-        "stipulates":     "says",
-        "thereof":        "of it",
-        "aforementioned": "mentioned above",
-        "provisions":     "rules",
-        "shall":          "must",
-        "whilst":         "while",
-        "herein":         "in this document",
-        "hereunder":      "below",
-        "aforesaid":      "mentioned",
+        "pursuant to": "according to", "stipulates": "says",
+        "thereof": "of it", "aforementioned": "mentioned above",
+        "provisions": "rules", "shall": "must", "whilst": "while",
+        "herein": "in this document", "hereunder": "below", "aforesaid": "mentioned",
     }
     for formal, plain in replacements.items():
         text = text.replace(formal, plain)
@@ -437,9 +503,11 @@ _EMBED_PATH = os.path.join(_CACHE_DIR, "chunk_embeddings.npy")
 
 
 def _download_if_missing(url, local_path):
+    """Always re-download to ensure latest GitHub version is used."""
     if os.path.exists(local_path):
         os.remove(local_path)
-    print(f"↓ Downloading {os.path.basename(local_path)} …")
+        print(f"↻ Refreshing {os.path.basename(local_path)} …")
+    print(f"↓ Downloading {os.path.basename(local_path)} from GitHub …")
     try:
         r = requests.get(url, timeout=120)
         r.raise_for_status()
@@ -473,7 +541,7 @@ def load_everything():
 
 
 # ---------------------------------------------------------------------------
-# STEP 1 — page config (must be very first Streamlit call)
+# PAGE CONFIG  (must be first Streamlit call)
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
@@ -484,166 +552,129 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# STEP 2 — session state init (must happen before ANY st.session_state read)
+# SESSION STATE
 # ---------------------------------------------------------------------------
 
-if "dark_mode" not in st.session_state:
-    st.session_state.dark_mode = True
-
-if "contrast" not in st.session_state:
-    st.session_state.contrast = 100
-
-if "conversations" not in st.session_state:
-    st.session_state.conversations = []
-
-if "active_conv_id" not in st.session_state:
-    st.session_state.active_conv_id = None
-
-if "suggested_query" not in st.session_state:
-    st.session_state.suggested_query = None
-
-if "font_size" not in st.session_state:
-    st.session_state.font_size = 16
+if "dark_mode"       not in st.session_state: st.session_state.dark_mode       = True
+if "contrast"        not in st.session_state: st.session_state.contrast        = 100
+if "font_size"       not in st.session_state: st.session_state.font_size       = 16
+if "conversations"   not in st.session_state: st.session_state.conversations   = []
+if "active_conv_id"  not in st.session_state: st.session_state.active_conv_id  = None
+if "suggested_query" not in st.session_state: st.session_state.suggested_query = None
 
 # ---------------------------------------------------------------------------
-# STEP 3 — now safe to read session state for CSS
+# DYNAMIC CSS
 # ---------------------------------------------------------------------------
 
-_dark = st.session_state.dark_mode
-_cont = st.session_state.contrast / 100   # 0.5 – 1.5
-_fsize = st.session_state.font_size       # 12 – 22px
+_dark  = st.session_state.dark_mode
+_cont  = st.session_state.contrast / 100
+_fsize = st.session_state.font_size
 
 if _dark:
-    BG        = "#0d1117"
-    SIDEBAR   = "#161b22"
-    BORDER    = "#21262d"
-    CARD      = "#1c2128"
-    TEXT      = f"rgba(230,237,243,{min(_cont,1)})"
-    SUBTEXT   = f"rgba(139,148,158,{min(_cont,1)})"
-    INPUT_BG  = "#1c2128"
-    INPUT_BOR = "#30363d"
+    BG, SIDEBAR, BORDER = "#0d1117", "#161b22", "#21262d"
+    TEXT    = f"rgba(230,237,243,{min(_cont,1)})"
+    SUBTEXT = f"rgba(139,148,158,{min(_cont,1)})"
+    INPUT_BG, INPUT_BOR = "#1c2128", "#30363d"
 else:
-    BG        = "#ffffff"
-    SIDEBAR   = "#f6f8fa"
-    BORDER    = "#d0d7de"
-    CARD      = "#f0f2f5"
-    TEXT      = f"rgba(31,35,40,{min(_cont,1)})"
-    SUBTEXT   = f"rgba(87,96,106,{min(_cont,1)})"
-    INPUT_BG  = "#ffffff"
-    INPUT_BOR = "#d0d7de"
+    BG, SIDEBAR, BORDER = "#ffffff", "#f6f8fa", "#d0d7de"
+    TEXT    = f"rgba(31,35,40,{min(_cont,1)})"
+    SUBTEXT = f"rgba(87,96,106,{min(_cont,1)})"
+    INPUT_BG, INPUT_BOR = "#ffffff", "#d0d7de"
 
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
-
 html, body, [class*="css"] {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
     color: {TEXT} !important;
     font-size: {_fsize}px !important;
 }}
-[data-testid="stAppViewContainer"] {{
-    filter: contrast({_cont});
-}}
+[data-testid="stAppViewContainer"] {{ filter: contrast({_cont}); }}
 #MainMenu, footer, header {{ visibility: hidden; }}
-
 [data-testid="stSidebar"] {{
     background-color: {SIDEBAR} !important;
     border-right: 1px solid {BORDER} !important;
 }}
 [data-testid="stSidebar"] * {{ color: {TEXT} !important; }}
-
 .sidebar-logo {{
-    display: flex; align-items: center; gap: 10px;
-    padding: 4px 0 20px; border-bottom: 1px solid {BORDER}; margin-bottom: 16px;
+    display:flex; align-items:center; gap:10px;
+    padding:4px 0 20px; border-bottom:1px solid {BORDER}; margin-bottom:16px;
 }}
 .sidebar-logo-icon {{
-    width: 34px; height: 34px; border-radius: 10px;
-    background: linear-gradient(135deg,#238636,#1f6feb);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 18px; flex-shrink: 0;
+    width:34px; height:34px; border-radius:10px;
+    background:linear-gradient(135deg,#238636,#1f6feb);
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; flex-shrink:0;
 }}
-.sidebar-logo-text {{ font-size: 0.9rem; font-weight: 600; }}
-.sidebar-logo-sub  {{ font-size: 0.65rem; color: {SUBTEXT} !important; }}
-
+.sidebar-logo-text {{ font-size:0.9rem; font-weight:600; }}
+.sidebar-logo-sub  {{ font-size:0.65rem; color:{SUBTEXT} !important; }}
 .sidebar-section-label {{
-    font-size: 0.65rem; font-weight: 600; letter-spacing: .08em;
-    text-transform: uppercase; color: {SUBTEXT} !important;
-    padding: 12px 0 6px;
+    font-size:0.65rem; font-weight:600; letter-spacing:.08em;
+    text-transform:uppercase; color:{SUBTEXT} !important; padding:12px 0 6px;
 }}
-
 .main-header {{
-    display: flex; align-items: center; gap: 14px;
-    padding: 0 0 18px; border-bottom: 1px solid {BORDER}; margin-bottom: 24px;
+    display:flex; align-items:center; gap:14px;
+    padding:0 0 18px; border-bottom:1px solid {BORDER}; margin-bottom:24px;
 }}
 .main-logo {{
-    width: 42px; height: 42px; border-radius: 12px;
-    background: linear-gradient(135deg,#238636,#1f6feb);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; flex-shrink: 0;
+    width:42px; height:42px; border-radius:12px;
+    background:linear-gradient(135deg,#238636,#1f6feb);
+    display:flex; align-items:center; justify-content:center;
+    font-size:22px; flex-shrink:0;
 }}
-.main-title {{ font-family: 'Playfair Display', serif; font-size: 1.15rem; color: {TEXT}; }}
-.main-sub   {{ font-size: 0.7rem; color: {SUBTEXT}; margin-top: 2px; }}
+.main-title {{ font-family:'Playfair Display',serif; font-size:1.15rem; color:{TEXT}; }}
+.main-sub   {{ font-size:0.7rem; color:{SUBTEXT}; margin-top:2px; }}
 .online-badge {{
-    margin-left: auto; font-size: 0.68rem; padding: 4px 12px;
-    border-radius: 20px; background: rgba(35,134,54,0.15);
-    color: #3fb950; border: 1px solid rgba(63,185,80,0.3);
+    margin-left:auto; font-size:0.68rem; padding:4px 12px; border-radius:20px;
+    background:rgba(35,134,54,0.15); color:#3fb950;
+    border:1px solid rgba(63,185,80,0.3);
 }}
-
-.welcome-card {{ text-align: center; padding: 40px 16px 28px; }}
+.welcome-card {{ text-align:center; padding:40px 16px 28px; }}
 .welcome-card h2 {{
-    font-family: 'Playfair Display', serif;
-    font-size: 1.7rem; margin-bottom: 12px; color: {TEXT};
+    font-family:'Playfair Display',serif; font-size:1.7rem;
+    margin-bottom:12px; color:{TEXT};
 }}
 .welcome-card p {{
-    color: {SUBTEXT}; font-size: 0.88rem;
-    line-height: 1.8; max-width: 500px; margin: 0 auto;
+    color:{SUBTEXT}; font-size:0.88rem;
+    line-height:1.8; max-width:500px; margin:0 auto;
 }}
-
 .src-tag {{
-    display: inline-block; margin: 4px 4px 0 0;
-    font-size: 0.68rem; padding: 3px 10px; border-radius: 20px;
-    background: rgba(31,111,235,.12); color: #58a6ff;
-    border: 1px solid rgba(88,166,255,.2);
+    display:inline-block; margin:4px 4px 0 0; font-size:0.68rem;
+    padding:3px 10px; border-radius:20px;
+    background:rgba(31,111,235,.12); color:#58a6ff;
+    border:1px solid rgba(88,166,255,.2);
 }}
-
 [data-testid="stChatInput"] textarea {{
-    background: {INPUT_BG} !important;
-    border: 1.5px solid {INPUT_BOR} !important;
-    border-radius: 28px !important;
-    color: {TEXT} !important;
-    font-family: 'Sora', sans-serif !important;
-    font-size: 0.95rem !important;
-    padding: 14px 20px !important;
+    background:{INPUT_BG} !important; border:1.5px solid {INPUT_BOR} !important;
+    border-radius:28px !important; color:{TEXT} !important;
+    font-family:'Sora',sans-serif !important;
+    font-size:0.95rem !important; padding:14px 20px !important;
 }}
 [data-testid="stChatInput"] textarea:focus {{
-    border-color: #58a6ff !important;
-    box-shadow: 0 0 0 3px rgba(88,166,255,.1) !important;
+    border-color:#58a6ff !important;
+    box-shadow:0 0 0 3px rgba(88,166,255,.1) !important;
 }}
 [data-testid="stChatInput"] button {{
-    background: linear-gradient(135deg,#238636,#1f6feb) !important;
-    border-radius: 50% !important; border: none !important;
+    background:linear-gradient(135deg,#238636,#1f6feb) !important;
+    border-radius:50% !important; border:none !important;
 }}
-
 [data-testid="stChatMessage"] {{
-    background: transparent !important;
-    border: none !important; padding: 4px 0 !important;
+    background:transparent !important; border:none !important; padding:4px 0 !important;
 }}
-hr {{ border-color: {BORDER} !important; }}
+hr {{ border-color:{BORDER} !important; }}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# STEP 4 — conversation helpers (after session state is ready)
+# CONVERSATION HELPERS
 # ---------------------------------------------------------------------------
 
 def new_conversation():
     conv_id = str(int(time.time() * 1000))
     st.session_state.conversations.insert(0, {
-        "id":        conv_id,
-        "title":     "New conversation",
-        "messages":  [],
-        "timestamp": datetime.now().strftime("%H:%M"),
+        "id": conv_id, "title": "New conversation",
+        "messages": [], "timestamp": datetime.now().strftime("%H:%M"),
     })
     st.session_state.active_conv_id = conv_id
 
@@ -690,57 +721,42 @@ with st.sidebar:
                 st.rerun()
 
     st.markdown("---")
+
+    # ── Settings ──────────────────────────────────────────────────────────────
     st.markdown('<div class="sidebar-section-label">⚙️ Settings</div>', unsafe_allow_html=True)
 
-    mode_label = "🌙 Dark mode" if st.session_state.dark_mode else "☀️ Light mode"
-    if st.toggle(mode_label, value=st.session_state.dark_mode, key="theme_toggle"):
-        if not st.session_state.dark_mode:
-            st.session_state.dark_mode = True
-            st.rerun()
-    else:
-        if st.session_state.dark_mode:
-            st.session_state.dark_mode = False
-            st.rerun()
-
-    st.markdown('<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;">🔆 Contrast</div>', unsafe_allow_html=True)
-    new_contrast = st.slider(
-        label="contrast_slider",
-        min_value=50,
-        max_value=150,
-        value=st.session_state.contrast,
-        step=5,
-        label_visibility="collapsed",
-        key="contrast_slider",
+    toggled = st.toggle(
+        "🌙 Dark mode" if st.session_state.dark_mode else "☀️ Light mode",
+        value=st.session_state.dark_mode, key="theme_toggle"
     )
-    if new_contrast != st.session_state.contrast:
-        st.session_state.contrast = new_contrast
+    if toggled != st.session_state.dark_mode:
+        st.session_state.dark_mode = toggled
         st.rerun()
 
-    # Font size
+    st.markdown('<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;">🔆 Contrast</div>', unsafe_allow_html=True)
+    nc = st.slider("contrast", 50, 150, st.session_state.contrast, 5,
+                   label_visibility="collapsed", key="contrast_slider")
+    if nc != st.session_state.contrast:
+        st.session_state.contrast = nc
+        st.rerun()
+
     st.markdown('<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;">🔡 Font size</div>', unsafe_allow_html=True)
-    new_font = st.slider(
-        label="font_slider",
-        min_value=12,
-        max_value=22,
-        value=st.session_state.font_size,
-        step=1,
-        label_visibility="collapsed",
-        key="font_slider",
-    )
-    if new_font != st.session_state.font_size:
-        st.session_state.font_size = new_font
+    nf = st.slider("font", 12, 22, st.session_state.font_size, 1,
+                   label_visibility="collapsed", key="font_slider")
+    if nf != st.session_state.font_size:
+        st.session_state.font_size = nf
         st.rerun()
 
     st.markdown("---")
 
-    # Emergency contacts panel
+    # ── Emergency contacts ────────────────────────────────────────────────────
     st.markdown("""
 <div style="background:rgba(255,77,77,0.08);border:1px solid rgba(255,77,77,0.3);
 border-radius:10px;padding:12px 14px;margin-bottom:12px;">
-<div style="font-size:0.72rem;font-weight:700;color:#ff6b6b;margin-bottom:8px;letter-spacing:.04em;">
+<div style="font-size:0.72rem;font-weight:700;color:#ff6b6b;margin-bottom:8px;">
 🚨 NEED IMMEDIATE HELP?
 </div>
-<div style="font-size:0.72rem;line-height:1.8;">
+<div style="font-size:0.72rem;line-height:1.9;">
 <b>Gender Mainstreaming Directorate</b><br>
 📞 +256 (0)414 532 631<br>
 📧 gendermainstreaming@mak.ac.ug<br><br>
@@ -750,18 +766,18 @@ border-radius:10px;padding:12px 14px;margin-bottom:12px;">
 <b>Security / Emergency</b><br>
 📞 +256 (0)414 530 903<br><br>
 <span style="color:#8b949e;">Mon–Fri · 8 AM – 5 PM<br>
-Walk-in: Frank Kalimuzo Building</span>
+Frank Kalimuzo Building</span>
 </div>
 </div>
 """, unsafe_allow_html=True)
 
-    st.markdown('<div style="font-size:0.65rem;line-height:1.6;color:#8b949e;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:0.65rem;line-height:1.6;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # MAIN CONTENT
 # ---------------------------------------------------------------------------
 
-st.markdown(f"""
+st.markdown("""
 <div class="main-header">
   <div class="main-logo">🛡️</div>
   <div>
@@ -777,7 +793,7 @@ with st.spinner("Loading policy documents and models — first run takes a minut
 
 active_conv = get_active_conv()
 
-# ── Welcome screen
+# ── Welcome screen ────────────────────────────────────────────────────────────
 if active_conv and not active_conv["messages"]:
     st.markdown("""
     <div class="welcome-card">
@@ -796,7 +812,7 @@ if active_conv and not active_conv["messages"]:
                 st.session_state.suggested_query = suggestion
                 st.rerun()
 
-# ── Chat history
+# ── Chat history ──────────────────────────────────────────────────────────────
 if active_conv:
     for msg in active_conv["messages"]:
         with st.chat_message(msg["role"], avatar="🛡️" if msg["role"] == "assistant" else "🧑"):
