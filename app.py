@@ -1,4 +1,5 @@
-""" Safeguarding Companion
+"""
+eSafeRide Safeguarding Companion
 RAG-Based Policy Question-Answering System for Makerere University
 """
 
@@ -474,11 +475,10 @@ _EMBED_PATH = os.path.join(_CACHE_DIR, "chunk_embeddings.npy")
 
 
 def _download_if_missing(url, local_path):
-    """Download a file only when it isn't already on disk."""
+    """Always re-download to ensure latest file from GitHub is used."""
     if os.path.exists(local_path):
-        size_kb = os.path.getsize(local_path) // 1024
-        print(f"✓ Using cached {os.path.basename(local_path)} ({size_kb} KB)")
-        return True
+        os.remove(local_path)
+        print(f"↻ Refreshing {os.path.basename(local_path)} (deleted old cache) …")
     print(f"↓ Downloading {os.path.basename(local_path)} from GitHub …")
     try:
         r = requests.get(url, timeout=120)
