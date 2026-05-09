@@ -608,48 +608,62 @@ footer, .gr-form > .label-wrap { display: none !important; }
 }
 
 /* ── FIXED INPUT BAR ── */
-/* Gradio renders gr.Row as a div with the elem_id directly on it */
 #input-bar {
     position: fixed !important;
     bottom: 0 !important; left: 0 !important; right: 0 !important;
     z-index: 200 !important;
-    padding: 14px 20px 22px !important;
-    background: linear-gradient(to top, #0d1117 80%, transparent) !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    gap: 0 !important;
+    margin: 0 !important;
+    padding: 16px 24px 24px !important;
+    background: linear-gradient(to top, #0d1117 75%, transparent) !important;
 }
 
-/* inner pill shell — wrap the row's children */
-#input-bar > .wrap,
+/* Gradio puts a flex gap wrapper inside the row — target it */
 #input-bar > div {
-    max-width: 780px;
-    width: 100%;
+    max-width: 780px !important;
+    margin: 0 auto !important;
     display: flex !important;
     align-items: center !important;
     background: #1c2128 !important;
     border: 1.5px solid #30363d !important;
-    border-radius: 28px !important;
-    padding: 8px 10px 8px 20px !important;
-    gap: 8px !important;
-    transition: border-color .2s;
-    min-height: 58px;
+    border-radius: 32px !important;
+    padding: 10px 10px 10px 22px !important;
+    gap: 10px !important;
+    min-height: 60px !important;
+    transition: border-color .2s !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4) !important;
 }
-#input-bar > .wrap:focus-within,
 #input-bar > div:focus-within {
     border-color: #58a6ff !important;
 }
 
-/* textbox */
+/* ── mic row (shown/hidden via JS) */
+#mic-row {
+    max-width: 780px !important;
+    margin: 0 auto 10px !important;
+    display: none;
+    background: #1c2128 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 16px !important;
+    padding: 12px 16px !important;
+}
+#mic-row.open { display: block !important; }
+
+/* ── textbox ── */
 #qbox {
     flex: 1 !important;
+    min-width: 0 !important;
     border: none !important;
     background: transparent !important;
     box-shadow: none !important;
     padding: 0 !important;
 }
-#qbox .wrap { border: none !important; box-shadow: none !important; background: transparent !important; padding: 0 !important; }
+#qbox > div,
+#qbox .wrap {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
 #qbox label { display: none !important; }
 #qbox textarea {
     background: transparent !important;
@@ -657,61 +671,55 @@ footer, .gr-form > .label-wrap { display: none !important; }
     box-shadow: none !important;
     color: #e6edf3 !important;
     font-family: 'Sora', sans-serif !important;
-    font-size: 0.97rem !important;
+    font-size: 1rem !important;
     resize: none !important;
     outline: none !important;
     min-height: 28px !important;
-    max-height: 140px !important;
-    padding: 4px 0 !important;
-    line-height: 1.55 !important;
+    max-height: 130px !important;
+    padding: 2px 0 !important;
+    line-height: 1.6 !important;
 }
 #qbox textarea::placeholder { color: #484f58 !important; }
 
-/* mic audio widget — compact */
-#mic-widget {
+/* ── mic icon button (plain HTML button in the bar) ── */
+#mic-toggle-btn {
     flex-shrink: 0 !important;
-    width: 54px !important;
-    min-width: 54px !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-}
-#mic-widget .wrap,
-#mic-widget label { display: none !important; }
-/* show just the mic icon button from Gradio's audio widget */
-#mic-widget button {
-    width: 40px !important; height: 40px !important;
+    width: 42px !important; height: 42px !important;
     border-radius: 50% !important;
     background: transparent !important;
-    border: 1px solid #30363d !important;
+    border: 1.5px solid #30363d !important;
     color: #8b949e !important;
-    font-size: 18px !important;
+    font-size: 17px !important;
     cursor: pointer !important;
-    display: flex !important; align-items: center !important; justify-content: center !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     transition: all .2s !important;
+    line-height: 1 !important;
 }
-#mic-widget button:hover { border-color: #58a6ff !important; color: #58a6ff !important; }
+#mic-toggle-btn:hover  { border-color: #58a6ff !important; color: #58a6ff !important; }
+#mic-toggle-btn.active { border-color: #3fb950 !important; color: #3fb950 !important; background: rgba(63,185,80,.08) !important; }
 
-/* send button */
+/* ── send button ── */
 #send-btn {
     flex-shrink: 0 !important;
     width: 44px !important; height: 44px !important;
+    min-width: 44px !important;
     border-radius: 50% !important;
     background: linear-gradient(135deg,#238636,#1f6feb) !important;
     color: #fff !important;
-    font-size: 18px !important;
+    font-size: 17px !important;
     border: none !important;
     padding: 0 !important;
-    min-width: 44px !important;
-    transition: opacity .2s, transform .1s !important;
+    transition: opacity .2s, transform .12s !important;
+    box-shadow: 0 2px 10px rgba(31,111,235,.35) !important;
 }
-#send-btn:hover { opacity: .85 !important; }
-#send-btn:active { transform: scale(.92) !important; }
+#send-btn:hover  { opacity: .82 !important; }
+#send-btn:active { transform: scale(.91) !important; }
 """
 
 # ---------------------------------------------------------------------------
-# JS — pill click fills the textarea; auto-scroll on new messages
+# JS
 # ---------------------------------------------------------------------------
 JS = """
 <script>
@@ -723,10 +731,16 @@ function fillQuery(el) {
     ta.focus();
 }
 
-// auto-scroll to bottom whenever chat content changes
-const _obs = new MutationObserver(() => {
-    window.scrollTo(0, document.body.scrollHeight);
-});
+function toggleMic() {
+    const row = document.getElementById('mic-row');
+    const btn = document.getElementById('mic-toggle-btn');
+    if (!row) return;
+    row.classList.toggle('open');
+    btn && btn.classList.toggle('active');
+}
+
+// auto-scroll to bottom on new messages
+const _obs = new MutationObserver(() => window.scrollTo(0, document.body.scrollHeight));
 setTimeout(() => {
     const el = document.getElementById('chat-display');
     if (el) _obs.observe(el, { childList: true, subtree: true });
@@ -756,10 +770,11 @@ with gr.Blocks(title="Safeguarding Companion") as demo:
     with gr.Column(elem_classes=["chat-scroll"]):
         chat_display = gr.HTML(value=WELCOME_HTML, elem_id="chat-display")
 
-    # ── HIDDEN STATE
+    # ── STATE
     history_state = gr.State([])
 
-    # ── FIXED INPUT BAR — one proper Gradio Row, styled entirely via CSS
+    # ── INPUT BAR: textbox + plain HTML mic btn + send btn
+    #    gr.Audio lives BELOW the bar in a collapsible row (no Gradio component inside bar)
     with gr.Row(elem_id="input-bar"):
         text_input = gr.Textbox(
             placeholder="Ask anything about university policies...",
@@ -767,23 +782,24 @@ with gr.Blocks(title="Safeguarding Companion") as demo:
             lines=1,
             max_lines=5,
             elem_id="qbox",
-            scale=8,
+            scale=9,
             container=False,
         )
-        audio_input = gr.Audio(
-            sources=["microphone"],
-            type="filepath",
-            show_label=False,
-            elem_id="mic-widget",
-            scale=1,
-            min_width=54,
-        )
-        send_btn = gr.Button(
-            "➤",
-            elem_id="send-btn",
-            scale=1,
-            min_width=54,
-        )
+        # plain HTML buttons — these render fine inside a gr.Row via gr.HTML
+        gr.HTML("""
+        <button id="mic-toggle-btn" onclick="toggleMic()" title="Voice input">🎙</button>
+        """)
+        send_btn = gr.Button("➤", elem_id="send-btn", scale=1, min_width=48)
+
+    # ── COLLAPSIBLE MIC ROW (hidden by default, shown when mic btn clicked)
+    gr.HTML('<div id="mic-row">')
+    audio_input = gr.Audio(
+        sources=["microphone"],
+        type="filepath",
+        label="🎙 Record your question, then press ➤ Send",
+        show_label=True,
+    )
+    gr.HTML('</div>')
 
     # ── WIRE UP
     send_btn.click(
@@ -797,7 +813,6 @@ with gr.Blocks(title="Safeguarding Companion") as demo:
         outputs=[history_state, chat_display, text_input],
     )
 
-    # inject JS last
     gr.HTML(JS)
 
 demo.launch(ssr_mode=False, css=CSS)
