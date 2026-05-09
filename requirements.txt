@@ -1,4 +1,4 @@
-gradio==4.44.0
+gradio==5.9.1
 transformers==4.45.0
 tokenizers>=0.20.0
 sentence-transformers==3.0.1
@@ -13,3 +13,4 @@ numpy
 pandas
 pdf2image
 pytesseract
+pyaudioop
