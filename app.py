@@ -522,6 +522,8 @@ html, body, [class*="css"] {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
     color: {TEXT} !important;
+}}
+[data-testid="stAppViewContainer"] {{
     filter: contrast({_cont});
 }}
 #MainMenu, footer, header {{ visibility: hidden; }}
