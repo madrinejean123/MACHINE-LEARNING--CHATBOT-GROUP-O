@@ -37,10 +37,10 @@ GITHUB_PDF_URLS = [
 DATA_FOLDER          = "data"
 CHUNK_CSV            = "policy_chunks.csv"
 EMBEDDINGS_NPY       = "chunk_embeddings.npy"
-CHUNK_MAX_WORDS      = 150
-CHUNK_OVERLAP        = 1
-TOP_K                = 5
-SIMILARITY_THRESHOLD = 0.25
+CHUNK_MAX_WORDS      = 250   # bigger chunks = more complete policy text per chunk
+CHUNK_OVERLAP        = 2    # more overlap = less chance of cutting a key sentence
+TOP_K                = 7    # retrieve more candidate chunks
+SIMILARITY_THRESHOLD = 0.20 # lower threshold = don't miss relevant chunks
 
 STOP_WORDS = {
     "the", "and", "for", "are", "that", "this", "with", "how",
@@ -244,8 +244,9 @@ def generate_answer(query, retrieved, tokenizer, model, device):
             "Directorate directly for assistance."
         )
 
+    # Use top 5 chunks (up from 3) and keep more text per chunk
     context_parts = []
-    for _, row in retrieved.head(3).iterrows():
+    for _, row in retrieved.head(5).iterrows():
         source = (
             row["source_document"]
             .replace(".pdf", "")
@@ -255,23 +256,25 @@ def generate_answer(query, retrieved, tokenizer, model, device):
         context_parts.append(f"[{source}]: {row['text']}")
     context = "\n\n".join(context_parts)
 
+    # Stronger, more detailed prompt
     prompt = (
-        f"You are a friendly university support assistant. "
+        f"You are a helpful university safeguarding advisor at Makerere University. "
         f"A student asked: \"{query}\"\n\n"
-        f"Using the policy excerpts below, write a clear, helpful answer "
-        f"in 3 to 5 short sentences. "
-        f"Do NOT copy sentences from the policy word-for-word. "
-        f"Do NOT use bullet letters like a) b) or numbers like 1. 2. "
-        f"Write naturally, as if explaining to a friend. "
-        f"Use plain English — no legal jargon.\n\n"
+        f"Using ONLY the policy excerpts below, give a thorough and practical answer. "
+        f"Your answer MUST:\n"
+        f"- Explain what the policy says about this topic in detail\n"
+        f"- Mention specific steps, rights, or procedures the student can take\n"
+        f"- Name any relevant office, committee, or contact point mentioned in the policy\n"
+        f"- Be written in plain, friendly English — no legal jargon\n"
+        f"- Be at least 5 sentences long\n\n"
         f"Policy excerpts:\n{context}\n\n"
         f"Question: {query}\n\n"
-        f"Helpful answer:"
+        f"Detailed, practical answer:"
     )
 
     inputs = tokenizer(
         prompt,
-        max_length=600,
+        max_length=1024,   # up from 600 — fit more context
         truncation=True,
         return_tensors="pt",
     ).to(device)
@@ -279,22 +282,26 @@ def generate_answer(query, retrieved, tokenizer, model, device):
     outputs = model.generate(
         input_ids=inputs.input_ids,
         attention_mask=inputs.attention_mask,
-        max_new_tokens=220,
-        num_beams=4,
+        max_new_tokens=350,        # up from 220 — allow longer answers
+        num_beams=5,               # slightly wider beam search
         early_stopping=True,
-        no_repeat_ngram_size=3,
+        no_repeat_ngram_size=4,    # reduce repetition
+        length_penalty=1.5,        # reward longer, fuller answers
         do_sample=False,
     )
 
     answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
     answer = clean_answer(answer)
 
-    if len(answer.split()) < 5:
-        return (
-            "The policy documents have relevant information but I could not "
-            "generate a clear summary. Please contact the Gender Mainstreaming "
-            "Directorate for assistance."
-        )
+    # If the model still gives a short answer, fall back to showing the
+    # raw policy text directly — always better than a one-liner
+    if len(answer.split()) < 15:
+        fallback_parts = []
+        for _, row in retrieved.head(3).iterrows():
+            src = nice_source_name(row["source_document"])
+            fallback_parts.append(f"According to the **{src}**: {row['text'].strip()}")
+        return "\n\n".join(fallback_parts)
+
     return answer
 
 
@@ -338,21 +345,122 @@ def get_chat_title(messages):
 
 
 # ---------------------------------------------------------------------------
+# HUGGING FACE DATASET CACHE
+# ---------------------------------------------------------------------------
+# The app saves policy_chunks.csv and chunk_embeddings.npy to a private
+# Hugging Face Dataset repo the first time it runs (slow — does OCR/chunking).
+# Every restart after that downloads them from HF instead — fast, no OCR.
+#
+# Setup (one-time):
+#   1. Go to https://huggingface.co/new-dataset
+#   2. Create a PRIVATE dataset called e.g. "your-username/safeguarding-cache"
+#   3. Add your HF token to the Space secrets:
+#      Space → Settings → Variables and secrets → New secret
+#      Name: HF_TOKEN   Value: hf_xxxxxxxxxxxx   (from hf.co/settings/tokens)
+#   4. Set HF_DATASET_REPO below to "your-username/safeguarding-cache"
+# ---------------------------------------------------------------------------
+
+HF_DATASET_REPO = "madrinejean123/safeguarding-cache"   # ← change to your repo
+
+
+def _hf_api():
+    """Return an authenticated HfApi instance using the Space secret."""
+    from huggingface_hub import HfApi
+    token = os.environ.get("HF_TOKEN", "")
+    return HfApi(token=token), token
+
+
+def load_chunks_from_hf():
+    """
+    Download policy_chunks.csv and chunk_embeddings.npy from HF dataset repo.
+    Returns (df, embeddings) on success, or (None, None) if not found yet.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+        api, token = _hf_api()
+
+        csv_path = hf_hub_download(
+            repo_id=HF_DATASET_REPO,
+            filename="policy_chunks.csv",
+            repo_type="dataset",
+            token=token,
+            local_dir=".",
+        )
+        npy_path = hf_hub_download(
+            repo_id=HF_DATASET_REPO,
+            filename="chunk_embeddings.npy",
+            repo_type="dataset",
+            token=token,
+            local_dir=".",
+        )
+        df         = pd.read_csv(csv_path)
+        embeddings = np.load(npy_path)
+        print(f"✓ Loaded {len(df)} chunks from Hugging Face cache.")
+        return df, embeddings
+
+    except Exception as e:
+        print(f"HF cache miss (will rebuild): {e}")
+        return None, None
+
+
+def save_chunks_to_hf(csv_path, npy_path):
+    """
+    Upload the two cache files to the HF dataset repo so future
+    restarts can skip the slow OCR/chunking step.
+    """
+    try:
+        api, token = _hf_api()
+        if not token:
+            print("No HF_TOKEN found — skipping cache upload.")
+            return
+
+        # Create the dataset repo if it doesn't exist yet
+        try:
+            api.create_repo(
+                repo_id=HF_DATASET_REPO,
+                repo_type="dataset",
+                private=True,
+                exist_ok=True,
+            )
+        except Exception:
+            pass
+
+        for local_file, hf_filename in [
+            (csv_path, "policy_chunks.csv"),
+            (npy_path, "chunk_embeddings.npy"),
+        ]:
+            api.upload_file(
+                path_or_fileobj=local_file,
+                path_in_repo=hf_filename,
+                repo_id=HF_DATASET_REPO,
+                repo_type="dataset",
+                token=token,
+            )
+        print("✓ Chunks and embeddings saved to Hugging Face dataset cache.")
+
+    except Exception as e:
+        print(f"Could not save to HF cache: {e}")
+
+
+# ---------------------------------------------------------------------------
 # LOAD MODELS
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(show_spinner=False)
 def load_everything():
-    download_pdfs(GITHUB_PDF_URLS, DATA_FOLDER)
+    # ── 1. Try fast path: download pre-built files from HF dataset repo ──────
+    df, embeddings = load_chunks_from_hf()
 
-    if os.path.exists(CHUNK_CSV) and os.path.exists(EMBEDDINGS_NPY):
-        df         = pd.read_csv(CHUNK_CSV)
-        embeddings = np.load(EMBEDDINGS_NPY)
-    else:
+    if df is None:
+        # ── 2. Slow path: build from scratch (first ever run) ────────────────
+        st.info("⏳ First-time setup: downloading PDFs and building chunks. This takes a few minutes but only happens once!")
+        download_pdfs(GITHUB_PDF_URLS, DATA_FOLDER)
         df = build_dataset(DATA_FOLDER)
         if df.empty:
             raise RuntimeError("No documents could be processed.")
+
         df.to_csv(CHUNK_CSV, index=False)
+
         tmp = SentenceTransformer("all-MiniLM-L6-v2")
         embeddings = tmp.encode(
             df["text"].astype(str).tolist(),
@@ -362,6 +470,10 @@ def load_everything():
         )
         np.save(EMBEDDINGS_NPY, embeddings)
 
+        # ── 3. Push to HF so next restart is instant ─────────────────────────
+        save_chunks_to_hf(CHUNK_CSV, EMBEDDINGS_NPY)
+
+    # ── 4. Load models (always needed) ───────────────────────────────────────
     emb_model   = SentenceTransformer("all-MiniLM-L6-v2")
     tokenizer   = AutoTokenizer.from_pretrained("google/flan-t5-base")
     gen_model   = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
