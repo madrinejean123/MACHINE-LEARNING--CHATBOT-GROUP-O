@@ -391,120 +391,408 @@ def handle_query(text_query, audio_input, simplified_mode):
 # GRADIO INTERFACE
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# GRADIO INTERFACE  — replace everything from CSS = """ to demo.launch()
+# ---------------------------------------------------------------------------
+
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body, .gradio-container {
-    font-family: 'DM Sans', sans-serif !important;
-    background-color: #f4f1eb !important;
+    font-family: 'Sora', sans-serif !important;
+    background: #0d1117 !important;
+    color: #e6edf3 !important;
+    min-height: 100vh;
 }
 
-.app-header {
-    background: #1b3a2d;
-    color: #f4f1eb;
-    padding: 2rem;
-    border-radius: 12px;
-    margin-bottom: 1.5rem;
+/* ── hide default gradio chrome ── */
+footer, .gr-form > .label-wrap { display: none !important; }
+.gradio-container { padding: 0 !important; max-width: 100% !important; }
+.contain { padding: 0 !important; }
+
+/* ── top bar ── */
+.top-bar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 28px;
+    background: rgba(13,17,23,0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid #21262d;
+}
+.top-bar-logo {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: linear-gradient(135deg, #238636, #1f6feb);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+}
+.top-bar-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.15rem; color: #e6edf3; letter-spacing: 0.01em;
+}
+.top-bar-subtitle {
+    font-size: 0.72rem; color: #8b949e; margin-top: 1px;
+}
+.top-bar-badge {
+    margin-left: auto;
+    font-size: 0.68rem; font-weight: 500; letter-spacing: 0.05em;
+    padding: 3px 10px; border-radius: 20px;
+    background: rgba(35,134,54,0.15); color: #3fb950;
+    border: 1px solid rgba(63,185,80,0.3);
 }
 
-.app-header h1 {
-    color: #c8e6c9;
-    font-size: 2rem;
-    margin: 0 0 0.4rem 0;
-    font-family: 'DM Serif Display', serif;
+/* ── chat window ── */
+.chat-wrap {
+    max-width: 820px; margin: 0 auto;
+    padding: 24px 20px 200px;   /* bottom pad = input bar height */
+    display: flex; flex-direction: column; gap: 20px;
 }
 
-.app-header p {
-    color: #a5d6a7;
-    margin: 0;
-    font-size: 0.95rem;
-    line-height: 1.5;
+/* ── bubbles ── */
+.bubble-row { display: flex; gap: 12px; align-items: flex-end; }
+.bubble-row.user { flex-direction: row-reverse; }
+
+.avatar {
+    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 600;
+}
+.avatar.bot  { background: linear-gradient(135deg,#238636,#1f6feb); color:#fff; }
+.avatar.user { background: #21262d; color: #8b949e; border:1px solid #30363d; }
+
+.bubble {
+    max-width: 72%; padding: 13px 16px;
+    border-radius: 18px; line-height: 1.65;
+    font-size: 0.9rem; position: relative;
+    animation: fadeUp 0.3s ease both;
+}
+.bubble.bot {
+    background: #161b22; border: 1px solid #21262d;
+    border-bottom-left-radius: 4px; color: #c9d1d9;
+}
+.bubble.user {
+    background: linear-gradient(135deg,#1f6feb,#388bfd);
+    border-bottom-right-radius: 4px; color: #fff;
+}
+.bubble ul { padding-left: 18px; margin-top: 6px; }
+.bubble li { margin-bottom: 5px; }
+.bubble strong { color: #e6edf3; }
+
+.source-tag {
+    display: inline-block; margin-top: 10px; margin-right: 6px;
+    font-size: 0.68rem; padding: 2px 8px; border-radius: 20px;
+    background: rgba(31,111,235,0.12); color: #58a6ff;
+    border: 1px solid rgba(88,166,255,0.2);
 }
 
-footer { display: none !important; }
+@keyframes fadeUp {
+    from { opacity:0; transform:translateY(8px); }
+    to   { opacity:1; transform:translateY(0); }
+}
+
+/* ── typing indicator ── */
+.typing { display: flex; gap: 5px; padding: 14px 16px; }
+.typing span {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #58a6ff; animation: blink 1.2s infinite;
+}
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink {
+    0%,80%,100% { opacity:0.2; transform:scale(0.85); }
+    40%          { opacity:1;   transform:scale(1); }
+}
+
+/* ── welcome card ── */
+.welcome-card {
+    text-align: center; padding: 40px 20px;
+    animation: fadeUp 0.5s ease both;
+}
+.welcome-card .shield { font-size: 3rem; margin-bottom: 14px; }
+.welcome-card h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.6rem; color: #e6edf3; margin-bottom: 8px;
+}
+.welcome-card p { color: #8b949e; font-size: 0.88rem; line-height: 1.7; max-width: 460px; margin: 0 auto 24px; }
+.pill-wrap { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.pill {
+    font-size: 0.78rem; padding: 7px 14px; border-radius: 20px;
+    background: #161b22; border: 1px solid #30363d; color: #8b949e;
+    cursor: pointer; transition: all 0.2s;
+}
+.pill:hover { border-color: #58a6ff; color: #58a6ff; background: rgba(88,166,255,0.06); }
+
+/* ── fixed input bar ── */
+.input-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+    padding: 16px 20px 20px;
+    background: linear-gradient(to top, #0d1117 70%, transparent);
+}
+.input-inner {
+    max-width: 820px; margin: 0 auto;
+    display: flex; align-items: flex-end; gap: 10px;
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 16px; padding: 10px 12px;
+    transition: border-color 0.2s;
+}
+.input-inner:focus-within { border-color: #58a6ff; }
+
+/* gradio textbox overrides */
+.input-inner .gr-textbox, .input-inner textarea {
+    background: transparent !important; border: none !important;
+    box-shadow: none !important; color: #e6edf3 !important;
+    font-family: 'Sora', sans-serif !important; font-size: 0.9rem !important;
+    resize: none !important; outline: none !important;
+    flex: 1; min-height: 24px; max-height: 120px;
+    padding: 2px 4px !important;
+}
+.input-inner textarea::placeholder { color: #484f58 !important; }
+
+.send-btn {
+    width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+    background: linear-gradient(135deg,#238636,#1f6feb);
+    border: none; cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+    transition: opacity 0.2s, transform 0.1s;
+    font-size: 16px;
+}
+.send-btn:hover { opacity: 0.85; }
+.send-btn:active { transform: scale(0.93); }
+
+.input-tools {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.tool-btn {
+    font-size: 0.72rem; padding: 4px 10px; border-radius: 20px;
+    background: transparent; border: 1px solid #30363d; color: #8b949e;
+    cursor: pointer; display: flex; align-items: center; gap: 5px;
+    transition: all 0.2s;
+}
+.tool-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+.tool-btn.active { background: rgba(35,134,54,0.12); border-color:#3fb950; color:#3fb950; }
+
+/* audio component shrink */
+#audio-wrap { display: none; }
+#audio-wrap.visible { display: block; padding: 8px 0 0; }
 """
 
-with gr.Blocks(css=CSS, title="Safeguarding Companion") as demo:
+# ── JavaScript for chat behaviour ────────────────────────────────────────────
+JS = """
+function initChat() {
+    // pill click → fill textarea
+    document.querySelectorAll('.pill').forEach(p => {
+        p.addEventListener('click', () => {
+            const ta = document.querySelector('#text-input textarea');
+            if (ta) {
+                ta.value = p.textContent;
+                ta.dispatchEvent(new Event('input', {bubbles:true}));
+            }
+        });
+    });
 
+    // mic toggle
+    const micBtn = document.getElementById('mic-toggle');
+    const audioWrap = document.getElementById('audio-wrap');
+    if (micBtn && audioWrap) {
+        micBtn.addEventListener('click', () => {
+            audioWrap.classList.toggle('visible');
+            micBtn.classList.toggle('active');
+        });
+    }
+}
+setTimeout(initChat, 800);
+"""
+
+WELCOME_HTML = """
+<div class="welcome-card">
+  <div class="shield">🛡️</div>
+  <h2>How can I help you today?</h2>
+  <p>
+    Ask me anything about Makerere University's safeguarding policies,
+    disability rights, sexual harassment procedures, and student protections.
+    Answers are grounded in official policy documents.
+  </p>
+  <div class="pill-wrap">
+    <div class="pill">How do I report harassment?</div>
+    <div class="pill">Rights for students with disabilities</div>
+    <div class="pill">How do I file a complaint?</div>
+    <div class="pill">What is the HIV/AIDS policy?</div>
+    <div class="pill">Support for persons with disabilities</div>
+  </div>
+</div>
+"""
+
+
+def render_message(role, content, sources=""):
+    if role == "user":
+        return f"""
+        <div class="bubble-row user">
+          <div class="avatar user">U</div>
+          <div class="bubble user">{content}</div>
+        </div>"""
+
+    # bot: convert bullet lines to <ul>
+    lines = content.strip().split("\n")
+    html_parts = []
+    in_ul = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            if not in_ul:
+                html_parts.append("<ul>"); in_ul = True
+            html_parts.append(f"<li>{stripped[2:]}</li>")
+        else:
+            if in_ul:
+                html_parts.append("</ul>"); in_ul = False
+            if stripped:
+                html_parts.append(f"<p>{stripped}</p>")
+    if in_ul:
+        html_parts.append("</ul>")
+
+    source_html = ""
+    if sources:
+        tags = "".join(
+            f'<span class="source-tag">📄 {s.strip()}</span>'
+            for s in sources.replace("Policy Sources:", "").split("\n")
+            if s.strip().startswith("-")
+        )
+        if tags:
+            source_html = f"<div style='margin-top:10px'>{tags}</div>"
+
+    inner = "\n".join(html_parts) + source_html
+    return f"""
+    <div class="bubble-row bot">
+      <div class="avatar bot">🛡</div>
+      <div class="bubble bot">{inner}</div>
+    </div>"""
+
+
+def chat_fn(user_msg, audio_input, simplified, history_state):
+    if not user_msg.strip() and audio_input is None:
+        return history_state, build_chat_html(history_state), ""
+
+    # resolve query (voice or text)
+    query = ""
+    if audio_input is not None:
+        query = transcribe_audio(audio_input)
+    if not query:
+        query = user_msg.strip()
+
+    if not query:
+        return history_state, build_chat_html(history_state), ""
+
+    # add user bubble
+    history_state = history_state + [("user", query, "")]
+
+    # greeting short-circuit
+    if is_greeting(query):
+        history_state = history_state + [("bot", GREETING_RESPONSE, "")]
+        return history_state, build_chat_html(history_state), ""
+
+    # RAG pipeline
+    retrieved = retrieve_top_k(query, embedding_model, embeddings, df)
+    answer    = generate_answer(query, retrieved, gen_tokenizer, gen_model, device)
+    if simplified:
+        answer = apply_simplified_language(answer)
+    formatted = format_response(answer)
+
+    sources = ""
+    if not retrieved.empty:
+        names = [
+            s.replace(".pdf", "").replace("-", " ").replace("_", " ")
+            for s in retrieved["source_document"].unique()
+        ]
+        sources = "Policy Sources:\n" + "\n".join(f"  - {n}" for n in names)
+
+    history_state = history_state + [("bot", formatted, sources)]
+    return history_state, build_chat_html(history_state), ""
+
+
+def build_chat_html(history):
+    if not history:
+        return WELCOME_HTML
+    parts = []
+    for role, content, sources in history:
+        parts.append(render_message(role, content, sources))
+    return "\n".join(parts)
+
+
+# ── Gradio blocks ─────────────────────────────────────────────────────────────
+
+with gr.Blocks(css=CSS, title="eSafeRide — Safeguarding Companion") as demo:
+
+    # top bar
     gr.HTML("""
-    <div class="app-header">
-        <h1>Safeguarding Companion</h1>
-        <p>
-            Ask questions about safeguarding policies, disability rights, sexual harassment
-            reporting, and student protection procedures.
-            Answers are grounded in official Makerere University policy documents
-            and written in plain, simple English.
-        </p>
+    <div class="top-bar">
+      <div class="top-bar-logo">🛡️</div>
+      <div>
+        <div class="top-bar-title">Safeguarding Companion</div>
+        <div class="top-bar-subtitle">Makerere University · Policy Q&A</div>
+      </div>
+      <div class="top-bar-badge">● Online</div>
     </div>
     """)
 
-    with gr.Row():
-        with gr.Column(scale=3):
-            text_input = gr.Textbox(
-                lines=2,
-                placeholder="Type your question here...",
-                label="Your Question",
-            )
-        with gr.Column(scale=1):
-            audio_input = gr.Audio(
-                sources=["microphone"],
-                type="filepath",
-                label="Or speak your question",
-            )
+    # chat display area
+    chat_display = gr.HTML(value=WELCOME_HTML, elem_id="chat-display")
 
-    simplified_toggle = gr.Checkbox(
-        label="Simplified language mode (plainer English)",
-        value=False,
-    )
+    # hidden state
+    history_state = gr.State([])
 
-    submit_btn = gr.Button("Get Answer", variant="primary")
+    # ── fixed input bar (rendered as HTML + real Gradio inputs overlaid) ──
+    gr.HTML("""
+    <div class="input-bar">
+      <div class="input-inner" id="input-inner-wrap">
+    """)
 
-    with gr.Row():
-        with gr.Column(scale=3):
-            text_output = gr.Textbox(
-                lines=10,
-                label="Answer",
-                interactive=False,
-            )
-        with gr.Column(scale=1):
-            sources_output = gr.Textbox(
-                lines=6,
-                label="Policy Sources",
-                interactive=False,
-            )
+    with gr.Row(elem_id="input-row"):
+        text_input = gr.Textbox(
+            placeholder="Ask about policies, rights, reporting...",
+            show_label=False,
+            lines=1,
+            max_lines=4,
+            elem_id="text-input",
+            scale=9,
+            container=False,
+        )
+        submit_btn = gr.Button("➤", elem_id="send-btn", scale=1, min_width=42, variant="primary")
 
-    gr.Examples(
-        examples=[
-            ["How do I report sexual harassment?", None, False],
-            ["What rights do students with disabilities have?", None, False],
-            ["How do I file a complaint?", None, True],
-            ["What support is available for persons with disabilities?", None, False],
-            ["What is the university HIV/AIDS policy?", None, False],
-        ],
-        inputs=[text_input, audio_input, simplified_toggle],
-        label="Example questions - click any to try",
-    )
+    gr.HTML("""
+      </div>
+      <div class="input-tools">
+        <button class="tool-btn active" id="simplified-hint" style="pointer-events:none">
+          🌿 Plain English mode
+        </button>
+        <button class="tool-btn" id="mic-toggle">🎙 Voice input</button>
+      </div>
+    </div>
+    """)
 
+    # hidden simplified toggle (always-on for clean UX; expose if needed)
+    simplified_toggle = gr.Checkbox(value=True, visible=False)
+
+    # audio hidden by default
+    with gr.Row(visible=False) as audio_row:
+        audio_input = gr.Audio(
+            sources=["microphone"],
+            type="filepath",
+            label="Speak your question",
+            show_label=False,
+        )
+
+    # wire up
     submit_btn.click(
-        fn=handle_query,
-        inputs=[text_input, audio_input, simplified_toggle],
-        outputs=[text_output, sources_output],
+        fn=chat_fn,
+        inputs=[text_input, audio_input, simplified_toggle, history_state],
+        outputs=[history_state, chat_display, text_input],
     )
-
     text_input.submit(
-        fn=handle_query,
-        inputs=[text_input, audio_input, simplified_toggle],
-        outputs=[text_output, sources_output],
+        fn=chat_fn,
+        inputs=[text_input, audio_input, simplified_toggle, history_state],
+        outputs=[history_state, chat_display, text_input],
     )
 
-    gr.HTML("""
-    <div style="margin-top:1.5rem; padding:1rem; background:#e8f5e9;
-                border-radius:8px; font-size:0.85rem; color:#1b3a2d;">
-        <strong>Accessibility features:</strong>
-        Full keyboard navigation. Screen-reader compatible.
-        Voice input via microphone.
-        Simplified language mode for plainer English responses.
-    </div>
-    """)
+    gr.HTML(f"<script>{JS}</script>")
 
 demo.launch(ssr_mode=False)
