@@ -418,135 +418,65 @@ def get_chat_title(messages):
 
 
 # ---------------------------------------------------------------------------
-# HUGGING FACE DATASET CACHE
-# ---------------------------------------------------------------------------
-# The app saves policy_chunks.csv and chunk_embeddings.npy to a private
-# Hugging Face Dataset repo the first time it runs (slow — does OCR/chunking).
-# Every restart after that downloads them from HF instead — fast, no OCR.
-#
-# Setup (one-time):
-#   1. Go to https://huggingface.co/new-dataset
-#   2. Create a PRIVATE dataset called e.g. "your-username/safeguarding-cache"
-#   3. Add your HF token to the Space secrets:
-#      Space → Settings → Variables and secrets → New secret
-#      Name: HF_TOKEN   Value: hf_xxxxxxxxxxxx   (from hf.co/settings/tokens)
-#   4. Set HF_DATASET_REPO below to "your-username/safeguarding-cache"
-# ---------------------------------------------------------------------------
-
-HF_DATASET_REPO = "madrinejean123/safeguarding-cache"   # ← change to your repo
-
-
-def _hf_api():
-    """Return an authenticated HfApi instance using the Space secret."""
-    from huggingface_hub import HfApi
-    token = os.environ.get("HF_TOKEN", "")
-    return HfApi(token=token), token
-
-
-def load_chunks_from_hf():
-    """
-    Download policy_chunks.csv and chunk_embeddings.npy from HF dataset repo.
-    Returns (df, embeddings) on success, or (None, None) if not found yet.
-    """
-    try:
-        from huggingface_hub import hf_hub_download
-        api, token = _hf_api()
-
-        csv_path = hf_hub_download(
-            repo_id=HF_DATASET_REPO,
-            filename="policy_chunks.csv",
-            repo_type="dataset",
-            token=token,
-            local_dir=".",
-        )
-        npy_path = hf_hub_download(
-            repo_id=HF_DATASET_REPO,
-            filename="chunk_embeddings.npy",
-            repo_type="dataset",
-            token=token,
-            local_dir=".",
-        )
-        df         = pd.read_csv(csv_path)
-        embeddings = np.load(npy_path)
-        print(f"✓ Loaded {len(df)} chunks from Hugging Face cache.")
-        return df, embeddings
-
-    except Exception as e:
-        print(f"HF cache miss (will rebuild): {e}")
-        return None, None
-
-
-def save_chunks_to_hf(csv_path, npy_path):
-    """
-    Upload the two cache files to the HF dataset repo so future
-    restarts can skip the slow OCR/chunking step.
-    """
-    try:
-        api, token = _hf_api()
-        if not token:
-            print("No HF_TOKEN found — skipping cache upload.")
-            return
-
-        # Create the dataset repo if it doesn't exist yet
-        try:
-            api.create_repo(
-                repo_id=HF_DATASET_REPO,
-                repo_type="dataset",
-                private=True,
-                exist_ok=True,
-            )
-        except Exception:
-            pass
-
-        for local_file, hf_filename in [
-            (csv_path, "policy_chunks.csv"),
-            (npy_path, "chunk_embeddings.npy"),
-        ]:
-            api.upload_file(
-                path_or_fileobj=local_file,
-                path_in_repo=hf_filename,
-                repo_id=HF_DATASET_REPO,
-                repo_type="dataset",
-                token=token,
-            )
-        print("✓ Chunks and embeddings saved to Hugging Face dataset cache.")
-
-    except Exception as e:
-        print(f"Could not save to HF cache: {e}")
-
-
-# ---------------------------------------------------------------------------
 # LOAD MODELS
 # ---------------------------------------------------------------------------
+# On Hugging Face Spaces, /data is the only folder that persists across
+# restarts (requires "Persistent storage" enabled — free on most plans).
+# We download chunks/embeddings there once and never again.
+# Falls back to current directory if /data isn't available.
+# ---------------------------------------------------------------------------
+
+GITHUB_RAW_BASE    = (
+    "https://raw.githubusercontent.com/"
+    "madrinejean123/MACHINE-LEARNING--CHATBOT-GROUP-O/madrine"
+)
+CHUNK_CSV_URL      = f"{GITHUB_RAW_BASE}/policy_chunks.csv"
+EMBEDDINGS_NPY_URL = f"{GITHUB_RAW_BASE}/chunk_embeddings.npy"
+
+# Use /data if it exists (HF persistent storage), otherwise current dir
+_CACHE_DIR  = "/data" if os.path.isdir("/data") else "."
+_CHUNK_PATH = os.path.join(_CACHE_DIR, "policy_chunks.csv")
+_EMBED_PATH = os.path.join(_CACHE_DIR, "chunk_embeddings.npy")
+
+
+def _download_if_missing(url, local_path):
+    """Download a file only when it isn't already on disk."""
+    if os.path.exists(local_path):
+        size_kb = os.path.getsize(local_path) // 1024
+        print(f"✓ Using cached {os.path.basename(local_path)} ({size_kb} KB)")
+        return True
+    print(f"↓ Downloading {os.path.basename(local_path)} from GitHub …")
+    try:
+        r = requests.get(url, timeout=120)
+        r.raise_for_status()
+        with open(local_path, "wb") as f:
+            f.write(r.content)
+        print(f"  ✓ Saved ({len(r.content)//1024} KB) → {local_path}")
+        return True
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        return False
+
 
 @st.cache_resource(show_spinner=False)
 def load_everything():
-    # ── 1. Try fast path: download pre-built files from HF dataset repo ──────
-    df, embeddings = load_chunks_from_hf()
+    # ── 1. Chunks & embeddings ───────────────────────────────────────────────
+    # Downloaded once into /data (persistent) — zero wait on every restart after
+    csv_ok = _download_if_missing(CHUNK_CSV_URL,      _CHUNK_PATH)
+    npy_ok = _download_if_missing(EMBEDDINGS_NPY_URL, _EMBED_PATH)
 
-    if df is None:
-        # ── 2. Slow path: build from scratch (first ever run) ────────────────
-        st.info("⏳ First-time setup: downloading PDFs and building chunks. This takes a few minutes but only happens once!")
-        download_pdfs(GITHUB_PDF_URLS, DATA_FOLDER)
-        df = build_dataset(DATA_FOLDER)
-        if df.empty:
-            raise RuntimeError("No documents could be processed.")
-
-        df.to_csv(CHUNK_CSV, index=False)
-
-        tmp = SentenceTransformer("all-MiniLM-L6-v2")
-        embeddings = tmp.encode(
-            df["text"].astype(str).tolist(),
-            show_progress_bar=False,
-            batch_size=32,
-            normalize_embeddings=True,
+    if not (csv_ok and npy_ok):
+        raise RuntimeError(
+            "Could not load pre-built chunks from GitHub. "
+            "Check that policy_chunks.csv and chunk_embeddings.npy "
+            "are pushed to the madrine branch."
         )
-        np.save(EMBEDDINGS_NPY, embeddings)
 
-        # ── 3. Push to HF so next restart is instant ─────────────────────────
-        save_chunks_to_hf(CHUNK_CSV, EMBEDDINGS_NPY)
+    df         = pd.read_csv(_CHUNK_PATH)
+    embeddings = np.load(_EMBED_PATH)
+    print(f"✓ Loaded {len(df)} chunks, embeddings shape {embeddings.shape}")
 
-    # ── 4. Load models (always needed) ───────────────────────────────────────
+    # ── 2. Models ────────────────────────────────────────────────────────────
     emb_model   = SentenceTransformer("all-MiniLM-L6-v2")
     tokenizer   = AutoTokenizer.from_pretrained("google/flan-t5-base")
     gen_model   = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
