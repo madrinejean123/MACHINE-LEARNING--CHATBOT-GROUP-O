@@ -1,6 +1,7 @@
 """
 eSafeRide Safeguarding Companion
 RAG-Based Policy Question-Answering System for Makerere University
+- Uses flan-t5-large locally (no API, no cost)
 """
 
 import os
@@ -16,7 +17,7 @@ from datetime import datetime
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 nltk.download("punkt", quiet=True)
 nltk.download("punkt_tab", quiet=True)
@@ -127,14 +128,89 @@ def extract_text_from_pdf(filepath):
 
 
 def clean_text(text):
-    fixes = {
+    # Expanded OCR fix dictionary — covers all common merged-word patterns
+    ocr_fixes = {
+        # Must/should/can merges
+        "mustbe": "must be",
+        "mustset": "must set",
+        "mustnot": "must not",
+        "shouldbe": "should be",
+        "canbe": "can be",
+        "willbe": "will be",
+        "shallbe": "shall be",
+        # Common preposition merges
+        "togo": "to go",
+        "todo": "to do",
+        "tothe": "to the",
+        "ofthe": "of the",
+        "inthe": "in the",
+        "forthe": "for the",
+        "andthe": "and the",
+        "bythe": "by the",
+        "onthe": "on the",
+        "atthe": "at the",
+        "withthe": "with the",
+        "fromthe": "from the",
+        "intothe": "into the",
+        # Institution / department merges
+        "Directorateof": "Directorate of",
+        "Mainstreamingor": "Mainstreaming or",
+        "Mainstreamingto": "Mainstreaming to",
+        "GenderMainstreaming": "Gender Mainstreaming",
+        "Deanof": "Dean of",
+        # Complaint / report merges
+        "complaintsof": "complaints of",
+        "complaintof": "complaint of",
+        "complaintshould": "complaint should",
+        "evidenceof": "evidence of",
+        "casesof": "cases of",
+        "formsof": "forms of",
+        "typesof": "types of",
+        "reportof": "report of",
+        # Person / victim merges
+        "victimsto": "victims to",
+        "victimof": "victim of",
+        "personin": "person in",
+        "personwho": "person who",
+        "personwith": "person with",
+        # Action merges
+        "actioncan": "action can",
+        "actionmust": "action must",
+        "stepsto": "steps to",
+        "ableto": "able to",
+        "failsto": "fails to",
+        "needto": "need to",
+        "hasto": "has to",
+        "wantto": "want to",
+        "doingany": "doing any",
+        "takingany": "taking any",
+        "subjectto": "subject to",
+        "accessto": "access to",
+        "rightto": "right to",
+        "entitledto": "entitled to",
+        # Word-break hyphen OCR artifacts
+        "specialcir cumstances": "special circumstances",
+        "specialcircumstances": "special circumstances",
+        "cir cumstances": "circumstances",
+        "har assment": "harassment",
+        "haras sment": "harassment",
+        "dis ability": "disability",
+        "com plaint": "complaint",
+        "investiga tion": "investigation",
+        "com mittee": "committee",
         "har- assment": "harassment",
         "dis- ability": "disability",
-        "re- port":     "report",
-        "com- plaint":  "complaint",
+        "re- port": "report",
+        "com- plaint": "complaint",
+        # Number / list prefix cleanup already in regex below
     }
-    for broken, fixed in fixes.items():
-        text = text.replace(broken, fixed)
+
+    for broken, fixed in ocr_fixes.items():
+        text = re.sub(re.escape(broken), fixed, text, flags=re.IGNORECASE)
+
+    # Fix hyphenated line-break merges e.g. "harass-\nment"
+    text = re.sub(r'(\w+)-\s+(\w+)', r'\1\2', text)
+
     text = re.sub(r"\b[a-zA-Z]\)\s*", "", text)
     text = re.sub(r"\b\d+\.\s*", "", text)
     text = re.sub(r"\b[ivxlIVXL]+\.\s*", "", text)
@@ -267,80 +343,70 @@ def retrieve_top_k(query, model, embeddings, df, k=TOP_K, threshold=SIMILARITY_T
 
 
 # ---------------------------------------------------------------------------
-# AI POLISHING  (HuggingFace free Inference API)
+# LOCAL FLAN-T5 GENERATION  (no API, no cost, runs on HuggingFace Space)
 # ---------------------------------------------------------------------------
 
-# Get HF token from environment (set as Space secret called HF_TOKEN)
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+@st.cache_resource(show_spinner=False)
+def load_generator():
+    """Load flan-t5-large once and cache it. Runs locally — no API needed."""
+    print("Loading flan-t5-large model...")
+    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
+    model     = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large")
+    device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    print(f"flan-t5-large loaded on {device}")
+    return tokenizer, model
 
-# We use Mistral-7B-Instruct — free on HF Inference API, great at following instructions
-HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
-
-def polish_with_ai(question: str, raw_policy_text: str) -> str:
+def polish_with_flan(question: str, raw_policy_text: str) -> str:
     """
-    Sends raw retrieved policy chunks to Mistral via HuggingFace free API.
-    Mistral rewrites them into a clean, friendly answer using ONLY the policy content.
-    Returns the polished string, or None if the call fails.
+    Uses flan-t5-large (local, free) to rewrite raw OCR policy text
+    into plain simple English. No API key needed.
+    Returns polished string, or None if generation fails.
     """
-    if not HF_TOKEN:
-        print("No HF_TOKEN found — skipping AI polish.")
-        return None
-
-    # Build the prompt in Mistral instruct format
-    prompt = f"""<s>[INST] You are a helpful university safeguarding assistant for Makerere University students.
-
-A student asked: "{question}"
-
-Here is the raw policy text retrieved from official documents (it may contain OCR errors like merged words):
----
-{raw_policy_text[:2000]}
----
-
-Your task:
-1. Fix any OCR errors (e.g. "mustbe" -> "must be", "Directorateof" -> "Directorate of", "togo" -> "to go").
-2. Rewrite the answer in plain simple English any student can understand.
-3. If it describes steps, use a numbered list (1. 2. 3.).
-4. If it is general information, use clear bullet points.
-5. Use ONLY information from the policy text above. Do not add anything extra.
-6. Keep it concise and remove repeated sentences.
-7. End with: "For more help, contact the Directorate of Gender Mainstreaming."
-
-Write the answer now: [/INST]"""
-
     try:
-        response = requests.post(
-            HF_API_URL,
-            headers={"Authorization": f"Bearer {HF_TOKEN}"},
-            json={
-                "inputs": prompt,
-                "parameters": {
-                    "max_new_tokens": 600,
-                    "temperature": 0.3,
-                    "do_sample": False,
-                    "return_full_text": False,
-                },
-            },
-            timeout=60,
+        tokenizer, model = load_generator()
+
+        prompt = (
+            "You are a helpful assistant explaining university policies in simple "
+            "friendly language for students.\n\n"
+            "Using ONLY the policy context below, answer the question with 3 to 5 "
+            "short bullet points. Use plain simple English. Avoid legal jargon. "
+            "Be friendly and clear. Each bullet point should be one sentence.\n\n"
+            f"Policy Context:\n{raw_policy_text[:1200]}\n\n"
+            f"Question: {question}\n\n"
+            "Simple answer:"
         )
-        response.raise_for_status()
-        data = response.json()
 
-        # Extract generated text
-        if isinstance(data, list) and len(data) > 0:
-            generated = data[0].get("generated_text", "").strip()
-            if generated:
-                return generated
+        inputs = tokenizer(
+            prompt,
+            max_length=512,
+            truncation=True,
+            return_tensors="pt"
+        ).to(model.device)
 
-        return None
+        outputs = model.generate(
+            input_ids=inputs.input_ids,
+            attention_mask=inputs.attention_mask,
+            max_new_tokens=300,
+            do_sample=False,
+            num_beams=4,
+        )
+
+        answer = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+
+        if len(answer.split()) < 5:
+            return None
+
+        return answer
 
     except Exception as e:
-        print(f"HF AI polish failed: {e}")
+        print(f"flan-t5 generation failed: {e}")
         return None
 
 
 # ---------------------------------------------------------------------------
-# FALLBACK FORMATTER  (used when AI call fails)
+# FALLBACK FORMATTER  (used when flan-t5 generation fails)
 # ---------------------------------------------------------------------------
 
 def is_greeting(text):
@@ -389,7 +455,7 @@ SKIP_PHRASES = [
 
 
 def format_chunks_as_bullets(retrieved, query=""):
-    """Fallback formatter when AI polishing is unavailable."""
+    """Fallback formatter when flan-t5 generation is unavailable."""
     ACTION_WORDS = {
         "report", "lodge", "file", "contact", "collect", "document",
         "record", "seek", "notify", "submit", "communicate", "keep",
@@ -442,11 +508,19 @@ def format_chunks_as_bullets(retrieved, query=""):
 # MAIN ANSWER GENERATOR
 # ---------------------------------------------------------------------------
 
+def format_as_bullets(answer):
+    """Ensure flan-t5 output displays as clean bullet points."""
+    if '\n' in answer or answer.startswith('•') or answer.startswith('-') or answer.startswith('*'):
+        return answer
+    sentences = [s.strip() for s in answer.split('.') if len(s.strip()) > 10]
+    return '\n'.join(f"• {s}." for s in sentences)
+
+
 def generate_answer(question: str, retrieved) -> str:
     """
     1. Collects raw text from retrieved policy chunks.
-    2. Sends to Mistral (free HF API) to rewrite into a clean friendly answer.
-    3. Falls back to bullet formatter if the API call fails.
+    2. Sends to flan-t5-large (local, free) to rewrite into plain English.
+    3. Falls back to bullet formatter if generation fails.
     """
     if retrieved is None or retrieved.empty:
         return (
@@ -455,16 +529,17 @@ def generate_answer(question: str, retrieved) -> str:
             "📞 +256 (0)414 532 631 · 📧 gendermainstreaming@mak.ac.ug"
         )
 
-    # Build raw policy context from retrieved chunks
+    # Build raw policy context from top 3 retrieved chunks (flan-t5 has limited context)
+    top_chunks = retrieved.head(3)
     raw_policy_text = "\n\n".join(
         f"[Source: {nice_source_name(row['source_document'])}]\n{row['text'].strip()}"
-        for _, row in retrieved.iterrows()
+        for _, row in top_chunks.iterrows()
     )
 
-    # Try AI polishing first
-    polished = polish_with_ai(question, raw_policy_text)
+    # Try flan-t5 local generation first
+    polished = polish_with_flan(question, raw_policy_text)
     if polished:
-        return polished
+        return format_as_bullets(polished)
 
     # Fallback to bullet formatter
     return format_chunks_as_bullets(retrieved, query=question)
@@ -487,7 +562,7 @@ def format_response(answer):
 
 
 # ---------------------------------------------------------------------------
-# LOAD MODELS
+# LOAD EMBEDDING MODEL + PRE-BUILT CHUNKS
 # ---------------------------------------------------------------------------
 
 GITHUB_RAW_BASE    = (
@@ -506,17 +581,17 @@ def _download_if_missing(url, local_path):
     """Always re-download to ensure latest GitHub version is used."""
     if os.path.exists(local_path):
         os.remove(local_path)
-        print(f"↻ Refreshing {os.path.basename(local_path)} …")
-    print(f"↓ Downloading {os.path.basename(local_path)} from GitHub …")
+        print(f"Refreshing {os.path.basename(local_path)} ...")
+    print(f"Downloading {os.path.basename(local_path)} from GitHub ...")
     try:
         r = requests.get(url, timeout=120)
         r.raise_for_status()
         with open(local_path, "wb") as f:
             f.write(r.content)
-        print(f"  ✓ Saved ({len(r.content)//1024} KB)")
+        print(f"  Saved ({len(r.content)//1024} KB)")
         return True
     except Exception as e:
-        print(f"  ✗ Failed: {e}")
+        print(f"  Failed: {e}")
         return False
 
 
@@ -534,7 +609,7 @@ def load_everything():
 
     df         = pd.read_csv(_CHUNK_PATH)
     embeddings = np.load(_EMBED_PATH)
-    print(f"✓ Loaded {len(df)} chunks, embeddings shape {embeddings.shape}")
+    print(f"Loaded {len(df)} chunks, embeddings shape {embeddings.shape}")
 
     emb_model = SentenceTransformer("all-MiniLM-L6-v2")
     return df, embeddings, emb_model
@@ -722,7 +797,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Settings ──────────────────────────────────────────────────────────────
     st.markdown('<div class="sidebar-section-label">⚙️ Settings</div>', unsafe_allow_html=True)
 
     toggled = st.toggle(
@@ -749,7 +823,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Emergency contacts ────────────────────────────────────────────────────
     st.markdown("""
 <div style="background:rgba(255,77,77,0.08);border:1px solid rgba(255,77,77,0.3);
 border-radius:10px;padding:12px 14px;margin-bottom:12px;">
@@ -788,8 +861,16 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.spinner("Loading policy documents and models — first run takes a minute…"):
+# Load embedding model + chunks (flan-t5 loads lazily on first question)
+with st.spinner("Loading policy documents — first run takes a moment…"):
     df, embeddings, emb_model = load_everything()
+
+# Pre-warm flan-t5 in background so first answer isn't slow
+with st.spinner("Loading answer generation model (flan-t5-large) — this takes ~1 min on first run…"):
+    try:
+        load_generator()
+    except Exception as e:
+        st.warning(f"Answer model could not load ({e}). Will use fallback formatter.")
 
 active_conv = get_active_conv()
 
@@ -838,7 +919,7 @@ if user_input and active_conv:
         active_conv["title"] = user_input[:45] + ("…" if len(user_input) > 45 else "")
 
     with st.chat_message("assistant", avatar="🛡️"):
-        with st.spinner("Searching policy documents…"):
+        with st.spinner("Searching policy documents and generating answer…"):
             if is_greeting(user_input):
                 answer    = GREETING_RESPONSE
                 sources   = []
