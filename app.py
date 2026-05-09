@@ -557,8 +557,47 @@ def apply_simplified_language(text):
     return text
 
 
+def fix_list_spacing(text):
+    """
+    Ensures every bullet point (• or -) and numbered item (1. 2. 3.)
+    is on its own separate line with a blank line before it for breathing room.
+    """
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        # Numbered list item e.g. "1." "2." "10."
+        if re.match(r'^\d+\.', stripped):
+            if result and result[-1] != "":
+                result.append("")
+            result.append(stripped)
+        # Bullet point starting with • or -
+        elif stripped.startswith("•") or stripped.startswith("-"):
+            if result and result[-1] != "":
+                result.append("")
+            result.append(stripped)
+        else:
+            result.append(line)
+
+    # Remove duplicate blank lines
+    final = []
+    prev_blank = False
+    for line in result:
+        if line == "":
+            if not prev_blank:
+                final.append(line)
+            prev_blank = True
+        else:
+            final.append(line)
+            prev_blank = False
+
+    return "\n".join(final)
+
+
 def format_response(answer):
-    return apply_simplified_language(answer)
+    answer = apply_simplified_language(answer)
+    answer = fix_list_spacing(answer)
+    return answer
 
 
 # ---------------------------------------------------------------------------
