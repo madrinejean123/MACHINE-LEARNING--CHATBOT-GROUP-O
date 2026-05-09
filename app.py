@@ -1,5 +1,4 @@
-"""
-eSafeRide Safeguarding Companion
+""" Safeguarding Companion
 RAG-Based Policy Question-Answering System for Makerere University
 - Uses Groq (Llama 3) for free, fast, clean answer generation
 """
