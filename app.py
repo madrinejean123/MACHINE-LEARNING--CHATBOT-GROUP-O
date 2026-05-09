@@ -366,8 +366,16 @@ def format_chunks_as_bullets(retrieved, query=""):
 
     if total_bullets == 0:
         return (
-            "I found related policy sections but could not extract clear steps. "
-            "Please contact the **Directorate of Gender Mainstreaming** directly for guidance."
+            "I found related policy sections but could not extract clear actionable steps.\n\n"
+            "**Please reach out directly:**\n\n"
+            "**Directorate of Gender Mainstreaming**\n"
+            "- 📍 Frank Kalimuzo Central Teaching Facility, Makerere University\n"
+            "- 📞 +256 (0)414 532 631\n"
+            "- 📧 gendermainstreaming@mak.ac.ug\n\n"
+            "**Office of the Dean of Students**\n"
+            "- 📞 +256 (0)414 531 543\n"
+            "- 📧 deanofstudents@mak.ac.ug\n\n"
+            "Both offices are open **Monday to Friday, 8 AM – 5 PM**."
         )
 
     header = f"Here is what the policies say about **{query.strip()}**:\n\n" if query else ""
@@ -378,8 +386,14 @@ def generate_answer(query, retrieved):
     if retrieved is None or retrieved.empty:
         return (
             "I could not find specific information about that in the policy documents. "
-            "Please try rephrasing your question, or contact the **Gender Mainstreaming "
-            "Directorate** directly for assistance."
+            "Please try rephrasing your question.\n\n"
+            "**Or contact directly:**\n\n"
+            "**Directorate of Gender Mainstreaming**\n"
+            "- 📞 +256 (0)414 532 631\n"
+            "- 📧 gendermainstreaming@mak.ac.ug\n\n"
+            "**Office of the Dean of Students**\n"
+            "- 📞 +256 (0)414 531 543\n"
+            "- 📧 deanofstudents@mak.ac.ug"
         )
     return format_chunks_as_bullets(retrieved, query=query)
 
@@ -488,12 +502,16 @@ if "active_conv_id" not in st.session_state:
 if "suggested_query" not in st.session_state:
     st.session_state.suggested_query = None
 
+if "font_size" not in st.session_state:
+    st.session_state.font_size = 16
+
 # ---------------------------------------------------------------------------
 # STEP 3 — now safe to read session state for CSS
 # ---------------------------------------------------------------------------
 
 _dark = st.session_state.dark_mode
 _cont = st.session_state.contrast / 100   # 0.5 – 1.5
+_fsize = st.session_state.font_size       # 12 – 22px
 
 if _dark:
     BG        = "#0d1117"
@@ -522,6 +540,7 @@ html, body, [class*="css"] {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
     color: {TEXT} !important;
+    font-size: {_fsize}px !important;
 }}
 [data-testid="stAppViewContainer"] {{
     filter: contrast({_cont});
@@ -697,8 +716,46 @@ with st.sidebar:
         st.session_state.contrast = new_contrast
         st.rerun()
 
+    # Font size
+    st.markdown('<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;">🔡 Font size</div>', unsafe_allow_html=True)
+    new_font = st.slider(
+        label="font_slider",
+        min_value=12,
+        max_value=22,
+        value=st.session_state.font_size,
+        step=1,
+        label_visibility="collapsed",
+        key="font_slider",
+    )
+    if new_font != st.session_state.font_size:
+        st.session_state.font_size = new_font
+        st.rerun()
+
     st.markdown("---")
-    st.markdown('<div style="font-size:0.68rem;line-height:1.6;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
+
+    # Emergency contacts panel
+    st.markdown("""
+<div style="background:rgba(255,77,77,0.08);border:1px solid rgba(255,77,77,0.3);
+border-radius:10px;padding:12px 14px;margin-bottom:12px;">
+<div style="font-size:0.72rem;font-weight:700;color:#ff6b6b;margin-bottom:8px;letter-spacing:.04em;">
+🚨 NEED IMMEDIATE HELP?
+</div>
+<div style="font-size:0.72rem;line-height:1.8;">
+<b>Gender Mainstreaming Directorate</b><br>
+📞 +256 (0)414 532 631<br>
+📧 gendermainstreaming@mak.ac.ug<br><br>
+<b>Dean of Students Office</b><br>
+📞 +256 (0)414 531 543<br>
+📧 deanofstudents@mak.ac.ug<br><br>
+<b>Security / Emergency</b><br>
+📞 +256 (0)414 530 903<br><br>
+<span style="color:#8b949e;">Mon–Fri · 8 AM – 5 PM<br>
+Walk-in: Frank Kalimuzo Building</span>
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown('<div style="font-size:0.65rem;line-height:1.6;color:#8b949e;">Answers drawn from official Makerere University policy documents.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # MAIN CONTENT
