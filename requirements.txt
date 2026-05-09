@@ -1,7 +1,8 @@
-gradio>=4.0.0
-transformers==4.40.0
-sentence-transformers==2.7.0
-huggingface_hub==0.34.0
+gradio==4.44.0
+transformers==4.45.0
+tokenizers>=0.20.0
+sentence-transformers==3.0.1
+huggingface_hub>=0.24.0
 torch
 scikit-learn
 PyPDF2
