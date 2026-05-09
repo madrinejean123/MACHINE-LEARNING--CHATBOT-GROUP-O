@@ -296,11 +296,7 @@ def generate_answer(query, retrieved, tokenizer, model, device):
     # If the model still gives a short answer, fall back to showing the
     # raw policy text directly — always better than a one-liner
     if len(answer.split()) < 15:
-        fallback_parts = []
-        for _, row in retrieved.head(3).iterrows():
-            src = nice_source_name(row["source_document"])
-            fallback_parts.append(f"According to the **{src}**: {row['text'].strip()}")
-        return "\n\n".join(fallback_parts)
+        return format_fallback(retrieved)
 
     return answer
 
@@ -322,13 +318,90 @@ def apply_simplified_language(text):
 
 
 def format_response(answer):
+    """
+    Turn a wall-of-text answer into clean, readable output.
+    - Detects sentences that are list items (rights, steps, procedures)
+      and formats them as numbered points under a heading.
+    - Intro/conclusion sentences stay as normal prose.
+    - Works on both the model's generated text AND the fallback raw policy text.
+    """
     answer = clean_answer(answer)
-    if "\n" in answer:
+
+    # ── Split into sentences ──────────────────────────────────────────────
+    raw_sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', answer) if len(s.strip()) > 8]
+    if not raw_sentences:
         return answer
-    sentences = [s.strip() for s in answer.split(".") if len(s.strip()) > 8]
-    if not sentences:
-        return answer
-    return " ".join(s + "." for s in sentences)
+
+    # ── Patterns that signal a list item (right, step, procedure) ────────
+    LIST_TRIGGERS = re.compile(
+        r'^(every student|students (with|living)|the university (must|will|shall)|'
+        r'you (have|can|must|are)|equal access|reasonable|appropriate|confidential|'
+        r'access to|you (have the right|should|may)|report|contact|inform|file|seek|'
+        r'the (policy|committee|directorate|office)|persons with|pwds|staff|'
+        r'protection|support|accommodation|right to|they (must|will|shall))',
+        re.IGNORECASE,
+    )
+
+    intro_sentences  = []
+    list_sentences   = []
+    closing_sentences = []
+    in_list = False
+
+    for sent in raw_sentences:
+        if LIST_TRIGGERS.match(sent):
+            in_list = True
+            list_sentences.append(sent)
+        elif in_list and len(sent.split()) < 6:
+            # very short sentence after list probably belongs to it
+            list_sentences.append(sent)
+        elif not in_list:
+            intro_sentences.append(sent)
+        else:
+            closing_sentences.append(sent)
+
+    # ── If nothing matched as a list, just return clean prose ────────────
+    if not list_sentences:
+        return " ".join(s if s.endswith(".") else s + "." for s in raw_sentences)
+
+    # ── Build formatted output ────────────────────────────────────────────
+    parts = []
+
+    if intro_sentences:
+        parts.append(" ".join(s if s.endswith(".") else s + "." for s in intro_sentences))
+
+    if list_sentences:
+        parts.append("\n**Here is what applies to you:**\n")
+        for i, item in enumerate(list_sentences, 1):
+            item = item.rstrip(".")
+            parts.append(f"{i}. {item}.")
+
+    if closing_sentences:
+        parts.append("\n" + " ".join(s if s.endswith(".") else s + "." for s in closing_sentences))
+
+    return "\n".join(parts)
+
+
+def format_fallback(retrieved):
+    """
+    When the model produces a weak answer, format the raw policy chunks
+    in a clean, readable way grouped by source document.
+    """
+    grouped = {}
+    for _, row in retrieved.head(4).iterrows():
+        src = nice_source_name(row["source_document"])
+        grouped.setdefault(src, []).append(row["text"].strip())
+
+    parts = []
+    for src, texts in grouped.items():
+        parts.append(f"**📋 {src}**\n")
+        combined = " ".join(texts)
+        # break into readable sentences and number them
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', combined) if len(s.strip()) > 10]
+        for i, s in enumerate(sentences[:8], 1):   # cap at 8 per source
+            parts.append(f"{i}. {s if s.endswith('.') else s + '.'}")
+        parts.append("")  # blank line between sources
+
+    return "\n".join(parts)
 
 
 def nice_source_name(raw):
@@ -804,8 +877,9 @@ if user_input and active_conv:
         with st.spinner("Searching policy documents…"):
 
             if is_greeting(user_input):
-                answer  = GREETING_RESPONSE
-                sources = []
+                answer    = GREETING_RESPONSE
+                sources   = []
+                retrieved = None
             else:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
                 raw       = generate_answer(user_input, retrieved, gen_tokenizer, gen_model, device)
