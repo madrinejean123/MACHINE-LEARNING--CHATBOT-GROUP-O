@@ -917,14 +917,40 @@ if user_input and active_conv:
                 answer    = GREETING_RESPONSE
                 sources   = []
                 retrieved = None
+                groq_used = None
             else:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
-                raw       = generate_answer(user_input, retrieved)
-                answer    = format_response(raw)
-                sources   = (
+
+                # Build raw context
+                raw_policy_text = "\n\n".join(
+                    f"[Source: {nice_source_name(row['source_document'])}]\n{row['text'].strip()}"
+                    for _, row in retrieved.iterrows()
+                )
+
+                # Try Groq and track whether it worked
+                groq_result = polish_with_groq(user_input, raw_policy_text)
+                if groq_result:
+                    groq_used = True
+                    raw = groq_result
+                else:
+                    groq_used = False
+                    raw = format_chunks_as_bullets(retrieved, query=user_input)
+
+                answer  = format_response(raw)
+                sources = (
                     list(retrieved["source_document"].unique())
                     if retrieved is not None and not retrieved.empty else []
                 )
+
+        # Debug badge — shows clearly whether Groq ran or not
+        if groq_used is True:
+            st.success("✅ Groq (Llama 3) generated this answer")
+        elif groq_used is False:
+            key_present = bool(GROQ_API_KEY)
+            st.warning(
+                f"⚠️ Groq failed — using fallback. "
+                f"API key loaded: {'YES' if key_present else 'NO — check Space secrets'}"
+            )
 
         st.markdown(answer)
 
