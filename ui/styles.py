@@ -19,7 +19,6 @@ def inject_css(
 ):
     st.markdown(f"""
 <style>
-
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
 /* ==========================================================================
@@ -55,25 +54,27 @@ header {{
     background-color: {SIDEBAR_BG} !important;
     border-right: 1px solid {BORDER} !important;
 
-    /* CRITICAL FIX */
     min-width: 320px !important;
     max-width: 320px !important;
 }}
 
 [data-testid="stSidebar"] > div:first-child {{
     padding: 1.2rem 1rem !important;
+    overflow-y: auto !important;
+    height: 100vh !important;
 }}
 
 [data-testid="stSidebar"] * {{
     color: {TEXT} !important;
+    opacity: 1 !important;
+    visibility: visible !important;
 }}
 
-/* Sidebar buttons */
 [data-testid="stSidebar"] .stButton > button {{
     width: 100% !important;
 
-    background: transparent !important;
-    border: 1px solid transparent !important;
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
 
     border-radius: 8px !important;
 
@@ -86,11 +87,20 @@ header {{
     margin-bottom: 2px !important;
 
     transition: background 0.15s ease;
+    display: block !important;
 }}
 
 [data-testid="stSidebar"] .stButton > button:hover {{
     background: rgba(88,166,255,0.07) !important;
     border-color: {BORDER} !important;
+}}
+
+/* Make sidebar form controls readable */
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div {{
+    color: {TEXT} !important;
 }}
 
 /* ==========================================================================
@@ -274,13 +284,10 @@ def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
             BG="#0d1117",
             SIDEBAR_BG="#161b22",
             BORDER="#21262d",
-
             TEXT=f"rgba(230,237,243,{min(_cont,1)})",
             SUBTEXT=f"rgba(139,148,158,{min(_cont,1)})",
-
             INPUT_BG="#1c2128",
             INPUT_BOR="#30363d",
-
             _cont=_cont,
             _fsize=_fsize,
         )
@@ -289,13 +296,10 @@ def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
         BG="#ffffff",
         SIDEBAR_BG="#f6f8fa",
         BORDER="#d0d7de",
-
         TEXT=f"rgba(31,35,40,{min(_cont,1)})",
         SUBTEXT=f"rgba(87,96,106,{min(_cont,1)})",
-
         INPUT_BG="#ffffff",
         INPUT_BOR="#d0d7de",
-
         _cont=_cont,
         _fsize=_fsize,
     )
