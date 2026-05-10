@@ -17,23 +17,7 @@ def render_sidebar(theme: dict):
     # ==============================
     with st.sidebar:
 
-        # DEBUG HEADER (keep for now)
-        st.markdown(
-            """
-            <div style="
-                background:#ffeb3b;
-                color:#000;
-                padding:10px;
-                border-radius:8px;
-                font-weight:700;
-                margin-bottom:10px;
-            ">
-            SIDEBAR LOADED SUCCESSFULLY
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
+        
         st.write("Theme check:", theme)
 
         # ==============================
