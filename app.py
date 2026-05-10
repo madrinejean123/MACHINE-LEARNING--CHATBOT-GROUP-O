@@ -1003,13 +1003,13 @@ if active_conv:
 # ---------------------------------------------------------------------------
 
 with st.expander("🎙️ Speak your question instead of typing", expanded=False):
-    st.caption("💡 If you see 'An error occurred' — click the mic icon and allow microphone access in your browser, then try again.")
-    audio_input = st.audio_input("Record your question here", key="mic_input")
+    st.caption("💡 Allow microphone access in your browser if prompted.")
+    audio_input = st.audio_input("🎙️ Click to record", key="mic_input")
+
     if audio_input is not None:
-        with st.spinner("🎙️ Transcribing your voice…"):
+        with st.spinner("🎙️ Transcribing…"):
             transcribed, debug_msgs = transcribe_audio(audio_input)
 
-        # Always show debug so we know exactly what happened
         for msg in debug_msgs:
             st.caption(f"🔍 {msg}")
 
@@ -1019,7 +1019,11 @@ with st.expander("🎙️ Speak your question instead of typing", expanded=False
                 st.session_state.suggested_query = transcribed
                 st.rerun()
         else:
-            st.warning("⚠️ Transcription returned empty — see debug lines above for why.")
+            st.warning("⚠️ Could not transcribe. You can type what you said below:")
+            manual = st.text_input("Type your question here", key="manual_voice")
+            if manual and st.button("✅ Submit", key="submit_manual"):
+                st.session_state.suggested_query = manual
+                st.rerun()
 
 # ---------------------------------------------------------------------------
 # TEXT CHAT INPUT
