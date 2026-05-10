@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # ===========================================================================
-# 2. DB AUTH IMPORT (NEW)
+# 2. DB AUTH IMPORT
 # ===========================================================================
 from db import verify_user, create_user
 
@@ -41,7 +41,7 @@ if "suggested_query" not in st.session_state:
 
 
 # ===========================================================================
-# 3. LOGIN SYSTEM (NEW UI BLOCK)
+# 4. LOGIN SYSTEM
 # ===========================================================================
 if not st.session_state.user_email:
 
@@ -77,7 +77,7 @@ if not st.session_state.user_email:
 
 
 # ===========================================================================
-# 4. THEME
+# 5. THEME
 # ===========================================================================
 from ui.styles import get_theme_vars
 
@@ -88,7 +88,7 @@ theme = get_theme_vars(
 )
 
 # ===========================================================================
-# 5. GLOBAL CSS VARIABLES
+# 6. GLOBAL CSS VARIABLES
 # ===========================================================================
 st.markdown(f"""
 <style>
@@ -152,14 +152,14 @@ html, body, .stApp {{
 
 
 # ===========================================================================
-# 6. SIDEBAR
+# 7. SIDEBAR
 # ===========================================================================
 from ui.sidebar import render_sidebar
 render_sidebar(theme)
 
 
 # ===========================================================================
-# 7. HEADER UI
+# 8. HEADER UI
 # ===========================================================================
 st.markdown("""
 <div class="main-header">
@@ -174,7 +174,7 @@ st.markdown("""
 
 
 # ===========================================================================
-# 8. LOAD MODELS
+# 9. LOAD MODELS
 # ===========================================================================
 from models import load_everything
 
@@ -183,7 +183,8 @@ with st.spinner("Loading policy documents — first run takes a moment…"):
 
 
 # ===========================================================================
-# 9. CHAT
+# 10. CHAT (NOW WITH USER SESSION FIX)
 # ===========================================================================
 from ui.chat import render_chat
-render_chat(df, embeddings, emb_model)
+
+render_chat(df, embeddings, emb_model, st.session_state.user_email)
