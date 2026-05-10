@@ -46,74 +46,42 @@ def text_to_speech(text):
 
 @st.cache_resource(show_spinner=False)
 def load_whisper():
-    from transformers import pipeline as hf_pipeline
-    return hf_pipeline(
-        "automatic-speech-recognition",
-        model="openai/whisper-base",       # better than tiny, still free
-        generate_kwargs={"language": "en", "task": "transcribe"},
-    )
+    import whisper
+    model = whisper.load_model("base")
+    return model
 
 
 def transcribe_audio(audio_bytes):
-    """Transcribe voice input — converts browser audio (webm/ogg) to wav first."""
+    """Transcribe using openai-whisper which handles webm natively via ffmpeg internally."""
     import tempfile, os
     debug_msgs = []
     try:
-        # Save raw browser audio (webm/ogg format from st.audio_input)
+        # Save raw audio — openai-whisper handles format detection internally
         raw = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
         raw.write(audio_bytes.read())
         raw.flush()
         raw.close()
-        debug_msgs.append(f"Raw audio saved: {os.path.getsize(raw.name)} bytes (webm)")
+        debug_msgs.append(f"Audio saved: {os.path.getsize(raw.name)} bytes")
 
-        # Convert to 16kHz mono wav — the format whisper needs
-        wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-        wav.close()
-        import subprocess
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", raw.name,
-            "-vn",           # no video
-            "-acodec", "pcm_s16le",  # standard wav encoding
-            "-ar", "16000",  # 16kHz sample rate for whisper
-            "-ac", "1",      # mono
-            wav.name
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        debug_msgs.append("Loading Whisper base model...")
+        model = load_whisper()
+        debug_msgs.append("Transcribing...")
+
+        result = model.transcribe(raw.name, language="en", task="transcribe")
         os.unlink(raw.name)
-        wav_size = os.path.getsize(wav.name)
-        debug_msgs.append(f"ffmpeg exit={result.returncode}, wav={wav_size} bytes")
-        if result.returncode != 0:
-            debug_msgs.append(f"ffmpeg stderr: {result.stderr[-300:]}")
-
-        if wav_size < 5000:
-            debug_msgs.append("ERROR: wav too small — ffmpeg conversion failed")
-            return "", debug_msgs
-
-        debug_msgs.append("Loading Whisper (cached after first run)...")
-        transcriber = load_whisper()
-        debug_msgs.append("Whisper ready — transcribing...")
-        result = transcriber(wav.name)
-        os.unlink(wav.name)
         text = result.get("text", "").strip()
-        debug_msgs.append(f"Whisper raw result: {repr(text)}")
+        debug_msgs.append(f"Whisper result: {repr(text)}")
 
-        HALLUCINATIONS = {
-            "you", "thank you", "thanks", "thank you.", "thanks.",
-            "bye", "bye.", "yes", "no", "okay", "ok", "hmm", "um",
-            "uh", "ah", "oh", "i", "me", "hey", "hi", "hello",
-            "you.", "you!", "heard you", "i heard you", "",
-        }
-        # Also reject if result is mostly dots (silence hallucination)
-        stripped = text.replace(".", "").replace(" ", "")
-        if stripped == "" or text.lower().rstrip(".,!?") in HALLUCINATIONS or len(text.split()) < 3:
-            debug_msgs.append(f"Rejected as hallucination/silence: {repr(text[:60])}")
+        # Reject silence/hallucinations
+        stripped = re.sub(r"[^a-zA-Z]", "", text)
+        if not stripped or len(text.split()) < 2:
+            debug_msgs.append(f"Rejected (silence/hallucination): {repr(text[:60])}")
             return "", debug_msgs
 
         debug_msgs.append(f"Accepted: {repr(text)}")
         return text, debug_msgs
     except Exception as e:
-        debug_msgs.append(f"ERROR: {e}")
+        debug_msgs.append(f"ERROR: {type(e).__name__}: {e}")
         return "", debug_msgs
 
 # ---------------------------------------------------------------------------
