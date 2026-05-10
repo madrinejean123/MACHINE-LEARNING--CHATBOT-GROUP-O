@@ -55,36 +55,50 @@ def load_whisper():
 
 
 def transcribe_audio(audio_bytes):
-    """Transcribe voice input using whisper-tiny forced to English."""
+    """Transcribe voice input — converts browser audio (webm/ogg) to wav first."""
     import tempfile, os
     debug_msgs = []
     try:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-        tmp.write(audio_bytes.read())
-        tmp.flush()
-        tmp.close()
-        debug_msgs.append(f"Audio saved: {os.path.getsize(tmp.name)} bytes")
+        # Save raw browser audio (webm/ogg format from st.audio_input)
+        raw = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
+        raw.write(audio_bytes.read())
+        raw.flush()
+        raw.close()
+        debug_msgs.append(f"Raw audio saved: {os.path.getsize(raw.name)} bytes (webm)")
+
+        # Convert to 16kHz mono wav — the format whisper needs
+        wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        wav.close()
+        ret = os.system(
+            f"ffmpeg -y -i {raw.name} -ar 16000 -ac 1 -f wav {wav.name} 2>/dev/null"
+        )
+        os.unlink(raw.name)
+        wav_size = os.path.getsize(wav.name)
+        debug_msgs.append(f"ffmpeg convert: exit={ret}, wav size={wav_size} bytes")
+
+        if wav_size < 1000:
+            debug_msgs.append("ERROR: wav too small after conversion — ffmpeg may have failed")
+            return "", debug_msgs
 
         debug_msgs.append("Loading Whisper (cached after first run)...")
         transcriber = load_whisper()
-        debug_msgs.append("Whisper ready — transcribing in English...")
-        result = transcriber(tmp.name)
-        os.unlink(tmp.name)
+        debug_msgs.append("Whisper ready — transcribing...")
+        result = transcriber(wav.name)
+        os.unlink(wav.name)
         text = result.get("text", "").strip()
         debug_msgs.append(f"Whisper raw result: {repr(text)}")
 
-        # Reject whisper hallucinations — common ones when mic picks up silence/noise
         HALLUCINATIONS = {
             "you", "thank you", "thanks", "thank you.", "thanks.",
             "bye", "bye.", "yes", "no", "okay", "ok", "hmm", "um",
             "uh", "ah", "oh", "i", "me", "hey", "hi", "hello",
-            "you.", "you!", "heard you", "i heard you",
+            "you.", "you!", "heard you", "i heard you", "",
         }
         if text.lower().rstrip(".,!?") in HALLUCINATIONS or len(text.split()) < 3:
-            debug_msgs.append(f"Rejected as hallucination (too short or common noise phrase): {repr(text)}")
+            debug_msgs.append(f"Rejected as hallucination: {repr(text)}")
             return "", debug_msgs
 
-        debug_msgs.append(f"Accepted transcription: {repr(text)}")
+        debug_msgs.append(f"Accepted: {repr(text)}")
         return text, debug_msgs
     except Exception as e:
         debug_msgs.append(f"ERROR: {e}")
@@ -1086,33 +1100,29 @@ if user_input and active_conv:
 
         st.markdown(answer)
 
-        # Voice output — fully offline TTS using pyttsx3
-        st.caption("🔊 Generating audio...")
+        # Generate TTS audio and store path in session state so it survives rerun
         try:
-            import pyttsx3, tempfile, os, subprocess
-            clean = re.sub(r"[•*#_\*]", "", answer)
-            clean = re.sub(r"\s+", " ", clean).strip()[:800]
-            st.caption(f"🔍 TTS: {len(clean)} chars to speak")
-
-            # pyttsx3 saves to wav offline — no internet needed
+            import pyttsx3, tempfile, os
+            clean = re.sub(r"[•*#_]", "", answer)
+            clean = " ".join(clean.split())[:800]
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
             tmp.close()
             engine = pyttsx3.init()
-            engine.setProperty("rate", 160)   # slightly slower for clarity
+            engine.setProperty("rate", 160)
             engine.setProperty("volume", 1.0)
             engine.save_to_file(clean, tmp.name)
             engine.runAndWait()
             engine.stop()
-
             size = os.path.getsize(tmp.name)
-            st.caption(f"🔍 TTS: wav saved ({size} bytes)")
             if size > 1000:
-                st.audio(tmp.name, format="audio/wav")
-                st.caption("🔊 Tap play above to hear this answer")
+                st.session_state["last_audio"] = tmp.name
+                st.session_state["last_audio_size"] = size
             else:
-                st.caption("🔇 TTS: file too small — pyttsx3 may have no voice installed")
+                st.session_state["last_audio"] = None
+                st.session_state["last_audio_err"] = f"wav too small ({size} bytes)"
         except Exception as tts_err:
-            st.caption(f"🔇 TTS error: {type(tts_err).__name__}: {tts_err}")
+            st.session_state["last_audio"] = None
+            st.session_state["last_audio_err"] = f"{type(tts_err).__name__}: {tts_err}"
 
         if sources:
             tags = "".join(
@@ -1130,3 +1140,18 @@ if user_input and active_conv:
 
     active_conv["messages"].append({"role": "assistant", "content": full_content})
     st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# AUDIO PLAYER — shown after rerun so it actually renders
+# ---------------------------------------------------------------------------
+if st.session_state.get("last_audio"):
+    audio_path = st.session_state["last_audio"]
+    size = st.session_state.get("last_audio_size", 0)
+    st.caption(f"🔍 TTS: wav ready ({size} bytes)")
+    st.audio(audio_path, format="audio/wav")
+    st.caption("🔊 Tap play to hear the last answer")
+    st.session_state["last_audio"] = None  # clear after showing
+elif "last_audio_err" in st.session_state and st.session_state["last_audio_err"]:
+    st.caption(f"🔇 TTS error: {st.session_state['last_audio_err']}")
+    st.session_state["last_audio_err"] = None
