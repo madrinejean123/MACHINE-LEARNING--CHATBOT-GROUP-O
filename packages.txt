@@ -2,3 +2,5 @@ poppler-utils
 tesseract-ocr
 tesseract-ocr-eng
 libgl1
+espeak-ng
+
