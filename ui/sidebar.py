@@ -17,7 +17,6 @@ def render_sidebar(theme: dict):
     # ==============================
     with st.sidebar:
 
-
         # ==============================
         # LOGO
         # ==============================
@@ -82,15 +81,33 @@ def render_sidebar(theme: dict):
             st.session_state.dark_mode = dark
             st.rerun()
 
-        # Contrast
-        st.session_state.contrast = st.slider(
-            "Contrast", 50, 150, st.session_state.contrast
+        # ==============================
+        # CONTRAST (FIXED)
+        # ==============================
+        new_contrast = st.slider(
+            "Contrast",
+            50, 150,
+            st.session_state.contrast,
+            key="contrast_slider"
         )
 
-        # Font size
-        st.session_state.font_size = st.slider(
-            "Font size", 12, 22, st.session_state.font_size
+        if new_contrast != st.session_state.contrast:
+            st.session_state.contrast = new_contrast
+            st.rerun()
+
+        # ==============================
+        # FONT SIZE (FIXED)
+        # ==============================
+        new_font = st.slider(
+            "Font size",
+            12, 22,
+            st.session_state.font_size,
+            key="font_slider"
         )
+
+        if new_font != st.session_state.font_size:
+            st.session_state.font_size = new_font
+            st.rerun()
 
         st.divider()
 
