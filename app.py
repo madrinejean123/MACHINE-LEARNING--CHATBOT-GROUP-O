@@ -35,7 +35,7 @@ theme = get_theme_vars(
     st.session_state.contrast,
     st.session_state.font_size,
 )
-#inject_css(**theme)
+inject_css(**theme)
 
 # ===========================================================================
 # 4. SIDEBAR
