@@ -44,19 +44,33 @@ def text_to_speech(text):
         return None
 
 
-def transcribe_audio(audio_path):
+def transcribe_audio(audio_bytes):
     """Transcribe voice input using whisper-tiny (free, runs locally)."""
+    import tempfile, os
+    debug_msgs = []
     try:
+        # Save audio bytes to a temp wav file first
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        tmp.write(audio_bytes.read())
+        tmp.flush()
+        tmp.close()
+        debug_msgs.append(f"Audio saved: {os.path.getsize(tmp.name)} bytes")
+
         from transformers import pipeline as hf_pipeline
+        debug_msgs.append("Whisper pipeline loading...")
         transcriber = hf_pipeline(
             "automatic-speech-recognition",
             model="openai/whisper-tiny"
         )
-        result = transcriber(audio_path)
-        return result["text"].strip()
+        debug_msgs.append("Whisper loaded — transcribing...")
+        result = transcriber(tmp.name)
+        os.unlink(tmp.name)
+        text = result.get("text", "").strip()
+        debug_msgs.append(f"Raw result: {repr(result)}")
+        return text, debug_msgs
     except Exception as e:
-        print(f"Transcription error: {e}")
-        return ""
+        debug_msgs.append(f"ERROR: {e}")
+        return "", debug_msgs
 
 # ---------------------------------------------------------------------------
 # CONFIGURATION
@@ -817,25 +831,6 @@ html, body, [class*="css"] {{
     background:transparent !important; border:none !important; padding:4px 0 !important;
 }}
 hr {{ border-color:{BORDER} !important; }}
-/* Sidebar toggle button fixed on left edge */
-.sidebar-toggle-btn {{
-    position:fixed; top:50%; left:0; transform:translateY(-50%);
-    z-index:999; background:linear-gradient(135deg,#238636,#1f6feb);
-    color:white; border:none; border-radius:0 8px 8px 0;
-    width:22px; height:60px; cursor:pointer;
-    font-size:12px; display:flex; align-items:center; justify-content:center;
-    box-shadow:2px 0 8px rgba(0,0,0,0.3);
-}}
-.sidebar-toggle-btn:hover {{ width:28px; transition:width 0.2s; }}
-/* Mic and speaker buttons */
-.voice-btn {{
-    display:inline-flex; align-items:center; justify-content:center;
-    background:linear-gradient(135deg,#238636,#1f6feb);
-    color:white; border:none; border-radius:50%;
-    width:38px; height:38px; cursor:pointer; font-size:16px;
-    box-shadow:0 2px 8px rgba(0,0,0,0.2); margin:0 4px;
-}}
-.voice-btn:hover {{ transform:scale(1.1); transition:transform 0.15s; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -984,11 +979,6 @@ if active_conv and not active_conv["messages"]:
                 st.session_state.suggested_query = suggestion
                 st.rerun()
 
-# ── Sidebar reopen button (top of main area) ─────────────────────────────────
-if st.button("☰  Menu / Settings", key="open_sidebar_btn"):
-    st.session_state.show_sidebar = not st.session_state.get("show_sidebar", True)
-    st.rerun()
-
 # ── Chat history ──────────────────────────────────────────────────────────────
 if active_conv:
     for msg in active_conv["messages"]:
@@ -1003,16 +993,19 @@ with st.expander("🎙️ Speak your question instead of typing", expanded=False
     audio_input = st.audio_input("Record your question here", key="mic_input")
     if audio_input is not None:
         with st.spinner("🎙️ Transcribing your voice…"):
-            transcribed = transcribe_audio(audio_input)
+            transcribed, debug_msgs = transcribe_audio(audio_input)
+
+        # Always show debug so we know exactly what happened
+        for msg in debug_msgs:
+            st.caption(f"🔍 {msg}")
+
         if transcribed:
-            st.session_state.voice_input = transcribed
             st.success(f"🎙️ Heard: *{transcribed}*")
             if st.button("✅ Submit this voice question", key="submit_voice"):
                 st.session_state.suggested_query = transcribed
-                st.session_state.voice_input = None
                 st.rerun()
         else:
-            st.warning("Could not understand the audio. Please try again or type your question.")
+            st.warning("⚠️ Transcription returned empty — see debug lines above for why.")
 
 # ---------------------------------------------------------------------------
 # TEXT CHAT INPUT
@@ -1062,23 +1055,21 @@ if user_input and active_conv:
                     if retrieved is not None and not retrieved.empty else []
                 )
 
-        # Debug badge
-        if groq_used is True:
-            st.success("✅ Groq (Llama 3) generated this answer")
-        elif groq_used is False:
-            key_present = bool(GROQ_API_KEY)
-            st.warning(
-                f"⚠️ Groq failed — using fallback. "
-                f"API key loaded: {'YES' if key_present else 'NO — check Space secrets'}"
-            )
-
         st.markdown(answer)
 
-        # Voice output — play answer aloud
-        audio_path = text_to_speech(answer)
-        if audio_path:
-            st.audio(audio_path, format="audio/mp3")
-            st.caption("🔊 Tap play to hear this answer read aloud")
+        # Voice output — play answer aloud with full debug
+        st.caption("🔊 Generating audio output...")
+        try:
+            audio_path = text_to_speech(answer)
+            if audio_path:
+                import os
+                st.caption(f"🔍 TTS: audio file created ({os.path.getsize(audio_path)} bytes)")
+                st.audio(audio_path, format="audio/mp3")
+                st.caption("🔊 Tap play above to hear this answer read aloud")
+            else:
+                st.caption("🔇 TTS returned None — gTTS may have failed silently")
+        except Exception as tts_err:
+            st.caption(f"🔇 TTS error: {tts_err}")
 
         if sources:
             tags = "".join(
