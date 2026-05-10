@@ -69,15 +69,25 @@ def transcribe_audio(audio_bytes):
         # Convert to 16kHz mono wav — the format whisper needs
         wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         wav.close()
-        ret = os.system(
-            f"ffmpeg -y -i {raw.name} -ar 16000 -ac 1 -f wav {wav.name} 2>/dev/null"
-        )
+        import subprocess
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", raw.name,
+            "-vn",           # no video
+            "-acodec", "pcm_s16le",  # standard wav encoding
+            "-ar", "16000",  # 16kHz sample rate for whisper
+            "-ac", "1",      # mono
+            wav.name
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
         os.unlink(raw.name)
         wav_size = os.path.getsize(wav.name)
-        debug_msgs.append(f"ffmpeg convert: exit={ret}, wav size={wav_size} bytes")
+        debug_msgs.append(f"ffmpeg exit={result.returncode}, wav={wav_size} bytes")
+        if result.returncode != 0:
+            debug_msgs.append(f"ffmpeg stderr: {result.stderr[-300:]}")
 
-        if wav_size < 1000:
-            debug_msgs.append("ERROR: wav too small after conversion — ffmpeg may have failed")
+        if wav_size < 5000:
+            debug_msgs.append("ERROR: wav too small — ffmpeg conversion failed")
             return "", debug_msgs
 
         debug_msgs.append("Loading Whisper (cached after first run)...")
@@ -94,8 +104,10 @@ def transcribe_audio(audio_bytes):
             "uh", "ah", "oh", "i", "me", "hey", "hi", "hello",
             "you.", "you!", "heard you", "i heard you", "",
         }
-        if text.lower().rstrip(".,!?") in HALLUCINATIONS or len(text.split()) < 3:
-            debug_msgs.append(f"Rejected as hallucination: {repr(text)}")
+        # Also reject if result is mostly dots (silence hallucination)
+        stripped = text.replace(".", "").replace(" ", "")
+        if stripped == "" or text.lower().rstrip(".,!?") in HALLUCINATIONS or len(text.split()) < 3:
+            debug_msgs.append(f"Rejected as hallucination/silence: {repr(text[:60])}")
             return "", debug_msgs
 
         debug_msgs.append(f"Accepted: {repr(text)}")
