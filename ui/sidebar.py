@@ -8,8 +8,8 @@ import streamlit as st
 
 
 def render_sidebar(theme: dict):
-    BORDER  = theme["BORDER"]
-    TEXT    = theme["TEXT"]
+    BORDER = theme["BORDER"]
+    TEXT = theme["TEXT"]
     SUBTEXT = theme["SUBTEXT"]
 
     with st.sidebar:
@@ -33,9 +33,9 @@ def render_sidebar(theme: dict):
         if st.button("✦  New conversation", use_container_width=True, key="new_chat_btn"):
             conv_id = str(int(time.time() * 1000))
             st.session_state.conversations.insert(0, {
-                "id":        conv_id,
-                "title":     "New conversation",
-                "messages":  [],
+                "id": conv_id,
+                "title": "New conversation",
+                "messages": [],
                 "timestamp": datetime.now().strftime("%H:%M"),
             })
             st.session_state.active_conv_id = conv_id
@@ -83,29 +83,30 @@ def render_sidebar(theme: dict):
         )
         if toggled != st.session_state.dark_mode:
             st.session_state.dark_mode = toggled
-            st.rerun()
 
         # Contrast slider
         st.markdown(
             f'<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;color:{TEXT};">🔆 Contrast</div>',
             unsafe_allow_html=True,
         )
-        nc = st.slider("contrast", 50, 150, st.session_state.contrast, 5,
-                       label_visibility="collapsed", key="contrast_slider")
+        nc = st.slider(
+            "contrast", 50, 150, st.session_state.contrast, 5,
+            label_visibility="collapsed", key="contrast_slider"
+        )
         if nc != st.session_state.contrast:
             st.session_state.contrast = nc
-            st.rerun()
 
         # Font size slider
         st.markdown(
             f'<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;color:{TEXT};">🔡 Font size</div>',
             unsafe_allow_html=True,
         )
-        nf = st.slider("font", 12, 22, st.session_state.font_size, 1,
-                       label_visibility="collapsed", key="font_slider")
+        nf = st.slider(
+            "font", 12, 22, st.session_state.font_size, 1,
+            label_visibility="collapsed", key="font_slider"
+        )
         if nf != st.session_state.font_size:
             st.session_state.font_size = nf
-            st.rerun()
 
         st.markdown(f'<hr style="border-color:{BORDER};margin:14px 0;"/>', unsafe_allow_html=True)
 
