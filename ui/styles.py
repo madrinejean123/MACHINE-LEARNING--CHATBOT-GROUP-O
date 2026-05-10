@@ -16,10 +16,13 @@ def inject_css(
     _cont,
     _fsize,
 ):
-    st.markdown(f"""
+  st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
+/* =========================
+   BASE APP
+========================= */
 html, body, .stApp {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
@@ -30,31 +33,27 @@ html, body, .stApp {{
     visibility: hidden;
 }}
 
+/* =========================
+   SIDEBAR (SAFE ZONE)
+========================= */
 [data-testid="stSidebar"] {{
     background-color: {SIDEBAR_BG} !important;
     border-right: 1px solid {BORDER} !important;
-    min-width: 320px !important;
-    max-width: 320px !important;
-    position: relative !important;
-    z-index: 9999 !important;
 }}
 
-[data-testid="stSidebar"] > div:first-child {{
-    padding: 1.2rem 1rem !important;
-    overflow-y: auto !important;
-    height: 100vh !important;
+/* ONLY style visible content, NOT structure */
+[data-testid="stSidebarContent"] {{
+    padding: 1rem !important;
 }}
 
-[data-testid="stSidebar"] *,
-[data-testid="stSidebar"] label,
+/* Safe text styling (no structural break) */
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
-[data-testid="stSidebar"] div {{
-    color: {TEXT} !important;
-    opacity: 1 !important;
-    visibility: visible !important;
+[data-testid="stSidebar"] label {{
+    color: {TEXT};
 }}
 
+/* Buttons only */
 [data-testid="stSidebar"] .stButton > button {{
     width: 100% !important;
     background: rgba(255,255,255,0.03) !important;
@@ -64,8 +63,6 @@ html, body, .stApp {{
     font-size: 0.82rem !important;
     text-align: left !important;
     padding: 7px 10px !important;
-    margin-bottom: 2px !important;
-    display: block !important;
 }}
 
 [data-testid="stSidebar"] .stButton > button:hover {{
@@ -73,6 +70,31 @@ html, body, .stApp {{
     border-color: {BORDER} !important;
 }}
 
+/* =========================
+   CHAT INPUT
+========================= */
+[data-testid="stChatInput"] textarea {{
+    background: {INPUT_BG} !important;
+    border: 1.5px solid {INPUT_BOR} !important;
+    border-radius: 28px !important;
+    color: {TEXT} !important;
+    font-size: 0.95rem !important;
+    padding: 14px 20px !important;
+}}
+
+/* =========================
+   CHAT MESSAGES
+========================= */
+[data-testid="stChatMessage"],
+[data-testid="stMarkdownContainer"] {{
+    font-size: {_fsize}px !important;
+    color: {TEXT} !important;
+    line-height: 1.6 !important;
+}}
+
+/* =========================
+   HEADER
+========================= */
 .main-header {{
     display: flex;
     align-items: center;
@@ -91,7 +113,6 @@ html, body, .stApp {{
     align-items: center;
     justify-content: center;
     font-size: 22px;
-    flex-shrink: 0;
 }}
 
 .main-title {{
@@ -103,7 +124,6 @@ html, body, .stApp {{
 .main-sub {{
     font-size: 0.7rem;
     color: {SUBTEXT};
-    margin-top: 2px;
 }}
 
 .online-badge {{
@@ -116,67 +136,6 @@ html, body, .stApp {{
     border: 1px solid rgba(63,185,80,0.3);
 }}
 
-.welcome-card {{
-    text-align: center;
-    padding: 40px 16px 28px;
-}}
-
-.welcome-card h2 {{
-    font-family: 'Playfair Display', serif;
-    font-size: 1.7rem;
-    margin-bottom: 12px;
-    color: {TEXT};
-}}
-
-.welcome-card p {{
-    color: {SUBTEXT};
-    font-size: 0.88rem;
-    line-height: 1.8;
-    max-width: 500px;
-    margin: 0 auto;
-}}
-
-.src-tag {{
-    display: inline-block;
-    margin: 4px 4px 0 0;
-    font-size: 0.68rem;
-    padding: 3px 10px;
-    border-radius: 20px;
-    background: rgba(31,111,235,.12);
-    color: #58a6ff;
-    border: 1px solid rgba(88,166,255,.2);
-}}
-
-[data-testid="stChatInput"] textarea {{
-    background: {INPUT_BG} !important;
-    border: 1.5px solid {INPUT_BOR} !important;
-    border-radius: 28px !important;
-    color: {TEXT} !important;
-    font-family: 'Sora', sans-serif !important;
-    font-size: 0.95rem !important;
-    padding: 14px 20px !important;
-}}
-
-[data-testid="stChatInput"] textarea:focus {{
-    border-color: #58a6ff !important;
-    box-shadow: 0 0 0 3px rgba(88,166,255,.1) !important;
-}}
-
-[data-testid="stChatInput"] button {{
-    background: linear-gradient(135deg,#238636,#1f6feb) !important;
-    border-radius: 50% !important;
-    border: none !important;
-}}
-
-[data-testid="stChatMessage"] {{
-    background: transparent !important;
-    border: none !important;
-    padding: 4px 0 !important;
-}}
-
-hr {{
-    border-color: {BORDER} !important;
-}}
 </style>
 """, unsafe_allow_html=True)
 
