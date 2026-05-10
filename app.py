@@ -4,6 +4,8 @@ All logic lives in separate modules — this file just wires them together.
 """
 
 import streamlit as st
+from db import init_db
+init_db()
 
 # ===========================================================================
 # 1. PAGE CONFIG
