@@ -16,17 +16,68 @@ st.set_page_config(
 )
 
 # ===========================================================================
-# 2. SESSION STATE
+# 2. DB AUTH IMPORT (NEW)
 # ===========================================================================
-if "dark_mode"       not in st.session_state: st.session_state.dark_mode       = True
-if "contrast"        not in st.session_state: st.session_state.contrast        = 100
-if "font_size"       not in st.session_state: st.session_state.font_size       = 16
-if "conversations"   not in st.session_state: st.session_state.conversations   = []
-if "active_conv_id"  not in st.session_state: st.session_state.active_conv_id  = None
-if "suggested_query" not in st.session_state: st.session_state.suggested_query = None
+from db import verify_user, create_user
 
 # ===========================================================================
-# 3. THEME
+# 3. SESSION STATE
+# ===========================================================================
+if "user_email" not in st.session_state:
+    st.session_state.user_email = None
+
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
+if "contrast" not in st.session_state:
+    st.session_state.contrast = 100
+if "font_size" not in st.session_state:
+    st.session_state.font_size = 16
+if "conversations" not in st.session_state:
+    st.session_state.conversations = []
+if "active_conv_id" not in st.session_state:
+    st.session_state.active_conv_id = None
+if "suggested_query" not in st.session_state:
+    st.session_state.suggested_query = None
+
+
+# ===========================================================================
+# 3. LOGIN SYSTEM (NEW UI BLOCK)
+# ===========================================================================
+if not st.session_state.user_email:
+
+    st.title("🛡️ Safeguarding Companion Login")
+
+    tab1, tab2 = st.tabs(["Login", "Register"])
+
+    # ---------------- LOGIN ----------------
+    with tab1:
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+            if verify_user(email, password):
+                st.session_state.user_email = email.lower().strip()
+                st.rerun()
+            else:
+                st.error("Invalid email or password")
+
+    # ---------------- REGISTER ----------------
+    with tab2:
+        new_email = st.text_input("New Email")
+        new_password = st.text_input("New Password", type="password")
+
+        if st.button("Create Account"):
+            try:
+                create_user(new_email, new_password)
+                st.success("Account created! Go to Login tab.")
+            except:
+                st.error("User already exists")
+
+    st.stop()
+
+
+# ===========================================================================
+# 4. THEME
 # ===========================================================================
 from ui.styles import get_theme_vars
 
@@ -37,14 +88,11 @@ theme = get_theme_vars(
 )
 
 # ===========================================================================
-# 4. GLOBAL CSS VARIABLES (FIXED)
+# 5. GLOBAL CSS VARIABLES
 # ===========================================================================
 st.markdown(f"""
 <style>
 
-/* =========================
-   ROOT VARIABLES
-========================= */
 :root {{
     --font-size: {theme["_fsize"]}px;
     --text: {theme["TEXT"]};
@@ -52,17 +100,11 @@ st.markdown(f"""
     --bg: {theme["BG"]};
 }}
 
-/* =========================
-   BASE APP
-========================= */
 html, body, .stApp {{
     background-color: var(--bg) !important;
     font-size: var(--font-size) !important;
 }}
 
-/* =========================
-   HEADER
-========================= */
 .main-header {{
     display: flex;
     align-items: center;
@@ -108,36 +150,40 @@ html, body, .stApp {{
 </style>
 """, unsafe_allow_html=True)
 
+
 # ===========================================================================
-# 5. SIDEBAR
+# 6. SIDEBAR
 # ===========================================================================
 from ui.sidebar import render_sidebar
 render_sidebar(theme)
 
+
 # ===========================================================================
-# 6. HEADER UI
+# 7. HEADER UI
 # ===========================================================================
 st.markdown("""
 <div class="main-header">
   <div class="main-logo">🛡️</div>
   <div>
     <div class="main-title">Safeguarding Companion</div>
-    <div class="main-sub">Makerere University · Policy Q&amp;A</div>
+    <div class="main-sub">Makerere University · Policy Q&A</div>
   </div>
   <div class="online-badge">● Online</div>
 </div>
 """, unsafe_allow_html=True)
 
+
 # ===========================================================================
-# 7. LOAD MODELS
+# 8. LOAD MODELS
 # ===========================================================================
 from models import load_everything
 
 with st.spinner("Loading policy documents — first run takes a moment…"):
     df, embeddings, emb_model = load_everything()
 
+
 # ===========================================================================
-# 8. CHAT
+# 9. CHAT
 # ===========================================================================
 from ui.chat import render_chat
 render_chat(df, embeddings, emb_model)
