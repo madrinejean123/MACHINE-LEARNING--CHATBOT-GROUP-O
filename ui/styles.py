@@ -1,6 +1,5 @@
 """
-ui/styles.py — fixed Streamlit CSS
-Sidebar rendering issue resolved
+ui/styles.py — safe Streamlit CSS
 """
 
 import streamlit as st
@@ -21,41 +20,23 @@ def inject_css(
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
-/* ==========================================================================
-   SAFE GLOBAL STYLES
-   ========================================================================== */
-
-html,
-body,
-.stApp {{
+html, body, .stApp {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
-    color: {TEXT} !important;
     font-size: {_fsize}px !important;
 }}
 
-/* App contrast */
-[data-testid="stAppViewContainer"] {{
-    filter: contrast({_cont});
-}}
-
-/* Hide Streamlit chrome */
-#MainMenu,
-footer,
-header {{
+#MainMenu, footer, header {{
     visibility: hidden;
 }}
-
-/* ==========================================================================
-   SIDEBAR — FIXED
-   ========================================================================== */
 
 [data-testid="stSidebar"] {{
     background-color: {SIDEBAR_BG} !important;
     border-right: 1px solid {BORDER} !important;
-
     min-width: 320px !important;
     max-width: 320px !important;
+    position: relative !important;
+    z-index: 9999 !important;
 }}
 
 [data-testid="stSidebar"] > div:first-child {{
@@ -64,7 +45,11 @@ header {{
     height: 100vh !important;
 }}
 
-[data-testid="stSidebar"] * {{
+[data-testid="stSidebar"] *,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div {{
     color: {TEXT} !important;
     opacity: 1 !important;
     visibility: visible !important;
@@ -72,21 +57,14 @@ header {{
 
 [data-testid="stSidebar"] .stButton > button {{
     width: 100% !important;
-
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-
+    background: rgba(255,255,255,0.03) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
     border-radius: 8px !important;
-
     color: {TEXT} !important;
-
     font-size: 0.82rem !important;
     text-align: left !important;
-
     padding: 7px 10px !important;
     margin-bottom: 2px !important;
-
-    transition: background 0.15s ease;
     display: block !important;
 }}
 
@@ -95,44 +73,24 @@ header {{
     border-color: {BORDER} !important;
 }}
 
-/* Make sidebar form controls readable */
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] div {{
-    color: {TEXT} !important;
-}}
-
-/* ==========================================================================
-   MAIN HEADER
-   ========================================================================== */
-
 .main-header {{
     display: flex;
     align-items: center;
     gap: 14px;
-
     padding: 0 0 18px;
-
     border-bottom: 1px solid {BORDER};
-
     margin-bottom: 24px;
 }}
 
 .main-logo {{
     width: 42px;
     height: 42px;
-
     border-radius: 12px;
-
     background: linear-gradient(135deg,#238636,#1f6feb);
-
     display: flex;
     align-items: center;
     justify-content: center;
-
     font-size: 22px;
-
     flex-shrink: 0;
 }}
 
@@ -150,23 +108,13 @@ header {{
 
 .online-badge {{
     margin-left: auto;
-
     font-size: 0.68rem;
-
     padding: 4px 12px;
-
     border-radius: 20px;
-
     background: rgba(35,134,54,0.15);
-
     color: #3fb950;
-
     border: 1px solid rgba(63,185,80,0.3);
 }}
-
-/* ==========================================================================
-   WELCOME CARD
-   ========================================================================== */
 
 .welcome-card {{
     text-align: center;
@@ -175,85 +123,50 @@ header {{
 
 .welcome-card h2 {{
     font-family: 'Playfair Display', serif;
-
     font-size: 1.7rem;
-
     margin-bottom: 12px;
-
     color: {TEXT};
 }}
 
 .welcome-card p {{
     color: {SUBTEXT};
-
     font-size: 0.88rem;
-
     line-height: 1.8;
-
     max-width: 500px;
-
     margin: 0 auto;
 }}
 
-/* ==========================================================================
-   SOURCE TAGS
-   ========================================================================== */
-
 .src-tag {{
     display: inline-block;
-
     margin: 4px 4px 0 0;
-
     font-size: 0.68rem;
-
     padding: 3px 10px;
-
     border-radius: 20px;
-
     background: rgba(31,111,235,.12);
-
     color: #58a6ff;
-
     border: 1px solid rgba(88,166,255,.2);
 }}
 
-/* ==========================================================================
-   CHAT INPUT
-   ========================================================================== */
-
 [data-testid="stChatInput"] textarea {{
     background: {INPUT_BG} !important;
-
     border: 1.5px solid {INPUT_BOR} !important;
-
     border-radius: 28px !important;
-
     color: {TEXT} !important;
-
     font-family: 'Sora', sans-serif !important;
-
     font-size: 0.95rem !important;
-
     padding: 14px 20px !important;
 }}
 
 [data-testid="stChatInput"] textarea:focus {{
     border-color: #58a6ff !important;
-
     box-shadow: 0 0 0 3px rgba(88,166,255,.1) !important;
 }}
 
 [data-testid="stChatInput"] button {{
     background: linear-gradient(135deg,#238636,#1f6feb) !important;
-
     border-radius: 50% !important;
-
     border: none !important;
 }}
-
-/* ==========================================================================
-   CHAT MESSAGES
-   ========================================================================== */
 
 [data-testid="stChatMessage"] {{
     background: transparent !important;
@@ -261,21 +174,14 @@ header {{
     padding: 4px 0 !important;
 }}
 
-/* ==========================================================================
-   HORIZONTAL RULES
-   ========================================================================== */
-
 hr {{
     border-color: {BORDER} !important;
 }}
-
 </style>
 """, unsafe_allow_html=True)
 
 
 def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
-    """Return all theme variables."""
-
     _cont = contrast / 100
     _fsize = font_size
 
@@ -285,7 +191,7 @@ def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
             SIDEBAR_BG="#161b22",
             BORDER="#21262d",
             TEXT=f"rgba(230,237,243,{min(_cont,1)})",
-            SUBTEXT=f"rgba(139,148,158,{min(_cont,1)})",
+            SUBTEXT=f"rgba(139,158,158,{min(_cont,1)})",
             INPUT_BG="#1c2128",
             INPUT_BOR="#30363d",
             _cont=_cont,
