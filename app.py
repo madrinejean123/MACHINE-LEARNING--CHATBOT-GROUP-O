@@ -71,7 +71,20 @@ def transcribe_audio(audio_bytes):
         result = transcriber(tmp.name)
         os.unlink(tmp.name)
         text = result.get("text", "").strip()
-        debug_msgs.append(f"Whisper result: {repr(text)}")
+        debug_msgs.append(f"Whisper raw result: {repr(text)}")
+
+        # Reject whisper hallucinations — common ones when mic picks up silence/noise
+        HALLUCINATIONS = {
+            "you", "thank you", "thanks", "thank you.", "thanks.",
+            "bye", "bye.", "yes", "no", "okay", "ok", "hmm", "um",
+            "uh", "ah", "oh", "i", "me", "hey", "hi", "hello",
+            "you.", "you!", "heard you", "i heard you",
+        }
+        if text.lower().rstrip(".,!?") in HALLUCINATIONS or len(text.split()) < 3:
+            debug_msgs.append(f"Rejected as hallucination (too short or common noise phrase): {repr(text)}")
+            return "", debug_msgs
+
+        debug_msgs.append(f"Accepted transcription: {repr(text)}")
         return text, debug_msgs
     except Exception as e:
         debug_msgs.append(f"ERROR: {e}")
@@ -836,6 +849,17 @@ html, body, [class*="css"] {{
     background:transparent !important; border:none !important; padding:4px 0 !important;
 }}
 hr {{ border-color:{BORDER} !important; }}
+/* Force sidebar visible and show the collapse arrow clearly */
+[data-testid="stSidebar"] {{
+    display: flex !important;
+    visibility: visible !important;
+}}
+[data-testid="collapsedControl"] {{
+    display: flex !important;
+    visibility: visible !important;
+    background: linear-gradient(135deg,#238636,#1f6feb) !important;
+    border-radius: 0 8px 8px 0 !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1062,24 +1086,31 @@ if user_input and active_conv:
 
         st.markdown(answer)
 
-        # Voice output — play answer aloud with full debug
-        st.caption("🔊 Generating audio output...")
+        # Voice output — fully offline TTS using pyttsx3
+        st.caption("🔊 Generating audio...")
         try:
-            from gtts import gTTS
-            import tempfile, os
-            clean = re.sub(r"[•*#_]", "", answer)
+            import pyttsx3, tempfile, os, subprocess
+            clean = re.sub(r"[•*#_\*]", "", answer)
             clean = re.sub(r"\s+", " ", clean).strip()[:800]
-            st.caption(f"🔍 TTS: text ready ({len(clean)} chars), calling gTTS...")
-            tts = gTTS(text=clean, lang="en", slow=False)
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-            tts.save(tmp.name)
+            st.caption(f"🔍 TTS: {len(clean)} chars to speak")
+
+            # pyttsx3 saves to wav offline — no internet needed
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            tmp.close()
+            engine = pyttsx3.init()
+            engine.setProperty("rate", 160)   # slightly slower for clarity
+            engine.setProperty("volume", 1.0)
+            engine.save_to_file(clean, tmp.name)
+            engine.runAndWait()
+            engine.stop()
+
             size = os.path.getsize(tmp.name)
-            st.caption(f"🔍 TTS: mp3 saved ({size} bytes)")
-            if size > 0:
-                st.audio(tmp.name, format="audio/mp3")
+            st.caption(f"🔍 TTS: wav saved ({size} bytes)")
+            if size > 1000:
+                st.audio(tmp.name, format="audio/wav")
                 st.caption("🔊 Tap play above to hear this answer")
             else:
-                st.caption("🔇 TTS: file was empty — gTTS wrote 0 bytes")
+                st.caption("🔇 TTS: file too small — pyttsx3 may have no voice installed")
         except Exception as tts_err:
             st.caption(f"🔇 TTS error: {type(tts_err).__name__}: {tts_err}")
 
