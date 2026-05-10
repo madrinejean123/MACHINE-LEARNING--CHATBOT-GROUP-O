@@ -1,5 +1,5 @@
 """
-ui/styles.py — safe Streamlit CSS (sidebar-safe version)
+ui/styles.py — safe Streamlit CSS (fixed sidebar toggle + stable layout)
 """
 
 import streamlit as st
@@ -20,29 +20,68 @@ def inject_css(
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
-/* =========================
+/* =========================================================
    BASE APP
-========================= */
+========================================================= */
 html, body, .stApp {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
     font-size: {_fsize}px !important;
-    color: {TEXT} !important;
 }}
 
-/* Contrast control (safe) */
-.stApp {{
+/* keep contrast working */
+[data-testid="stAppViewContainer"] {{
     filter: contrast({_cont});
 }}
 
-/* Hide Streamlit default UI */
 #MainMenu, footer, header {{
     visibility: hidden;
 }}
 
-/* =========================
+/* =========================================================
+   SIDEBAR (SAFE — DOES NOT BREAK TOGGLE)
+========================================================= */
+
+/* ONLY background + border (NO width / position changes) */
+[data-testid="stSidebar"] {{
+    background-color: {SIDEBAR_BG} !important;
+    border-right: 1px solid {BORDER} !important;
+}}
+
+/* SAFE spacing only */
+[data-testid="stSidebar"] > div {{
+    padding: 1rem !important;
+}}
+
+/* TEXT ONLY (NO *) */
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] div {{
+    color: {TEXT} !important;
+}}
+
+/* SIDEBAR BUTTONS */
+[data-testid="stSidebar"] .stButton > button {{
+    width: 100% !important;
+    background: rgba(255,255,255,0.03) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 8px !important;
+    color: {TEXT} !important;
+    font-size: 0.82rem !important;
+    text-align: left !important;
+    padding: 7px 10px !important;
+    margin-bottom: 2px !important;
+}}
+
+[data-testid="stSidebar"] .stButton > button:hover {{
+    background: rgba(88,166,255,0.07) !important;
+    border-color: {BORDER} !important;
+}}
+
+/* =========================================================
    CHAT INPUT
-========================= */
+========================================================= */
 [data-testid="stChatInput"] textarea {{
     background: {INPUT_BG} !important;
     border: 1.5px solid {INPUT_BOR} !important;
@@ -54,7 +93,7 @@ html, body, .stApp {{
 
 [data-testid="stChatInput"] textarea:focus {{
     border-color: #58a6ff !important;
-    box-shadow: 0 0 0 3px rgba(88,166,255,.15) !important;
+    box-shadow: 0 0 0 3px rgba(88,166,255,.1) !important;
 }}
 
 [data-testid="stChatInput"] button {{
@@ -63,24 +102,19 @@ html, body, .stApp {{
     border: none !important;
 }}
 
-/* =========================
+/* =========================================================
    CHAT MESSAGES
-========================= */
-[data-testid="stChatMessage"] {{
-    background: transparent !important;
-    border: none !important;
-    padding: 6px 0 !important;
-}}
-
+========================================================= */
+[data-testid="stChatMessage"],
 [data-testid="stMarkdownContainer"] {{
     font-size: {_fsize}px !important;
     color: {TEXT} !important;
     line-height: 1.6 !important;
 }}
 
-/* =========================
+/* =========================================================
    HEADER
-========================= */
+========================================================= */
 .main-header {{
     display: flex;
     align-items: center;
@@ -99,6 +133,7 @@ html, body, .stApp {{
     align-items: center;
     justify-content: center;
     font-size: 22px;
+    flex-shrink: 0;
 }}
 
 .main-title {{
@@ -127,9 +162,6 @@ html, body, .stApp {{
 
 
 def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
-    """
-    Theme variables (unchanged logic)
-    """
     _cont = contrast / 100
     _fsize = font_size
 
@@ -139,7 +171,7 @@ def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
             SIDEBAR_BG="#161b22",
             BORDER="#21262d",
             TEXT=f"rgba(230,237,243,{min(_cont,1)})",
-            SUBTEXT=f"rgba(139,158,158,{min(_cont,1)})",
+            SUBTEXT=f"rgba(139,148,158,{min(_cont,1)})",
             INPUT_BG="#1c2128",
             INPUT_BOR="#30363d",
             _cont=_cont,
