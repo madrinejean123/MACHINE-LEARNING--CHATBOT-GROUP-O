@@ -17,7 +17,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # USERS TABLE (LOGIN SYSTEM)
+    # USERS TABLE
     c.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,7 +27,7 @@ def init_db():
     )
     """)
 
-    # MESSAGES TABLE (YOUR EXISTING ONE)
+    # MESSAGES TABLE
     c.execute("""
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,14 +46,14 @@ def init_db():
 # ==========================================================
 # 2. HASH PASSWORD
 # ==========================================================
-def hash_password(password: str):
+def _hash(password: str):
     return hashlib.sha256(password.encode()).hexdigest()
 
 
 # ==========================================================
-# 3. REGISTER USER
+# 3. CREATE USER (REGISTER)
 # ==========================================================
-def register_user(email: str, password: str):
+def create_user(email: str, password: str):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
@@ -63,30 +63,30 @@ def register_user(email: str, password: str):
         c.execute("""
         INSERT INTO users (email, password, session_id)
         VALUES (?, ?, ?)
-        """, (email, hash_password(password), session_id))
+        """, (email.lower().strip(), _hash(password), session_id))
 
         conn.commit()
-        return session_id
+        return True
 
     except sqlite3.IntegrityError:
-        return None
+        return False
 
     finally:
         conn.close()
 
 
 # ==========================================================
-# 4. LOGIN USER
+# 4. VERIFY USER (LOGIN)
 # ==========================================================
-def login_user(email: str, password: str):
+def verify_user(email: str, password: str):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
     c.execute("""
-    SELECT session_id, password
+    SELECT password, session_id
     FROM users
     WHERE email = ?
-    """, (email,))
+    """, (email.lower().strip(),))
 
     row = c.fetchone()
     conn.close()
@@ -94,9 +94,9 @@ def login_user(email: str, password: str):
     if not row:
         return None
 
-    session_id, stored_password = row
+    stored_password, session_id = row
 
-    if stored_password == hash_password(password):
+    if stored_password == _hash(password):
         return session_id
 
     return None
@@ -159,7 +159,7 @@ def load_conversations(session_id):
 
 
 # ==========================================================
-# 8. GET LAST MESSAGE
+# 8. LAST MESSAGE
 # ==========================================================
 def get_last_message(session_id, conversation_id):
     conn = sqlite3.connect(DB_NAME)
