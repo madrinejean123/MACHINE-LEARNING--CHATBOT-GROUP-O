@@ -17,8 +17,6 @@ def render_sidebar(theme: dict):
     # ==============================
     with st.sidebar:
 
-        
-        st.write("Theme check:", theme)
 
         # ==============================
         # LOGO
