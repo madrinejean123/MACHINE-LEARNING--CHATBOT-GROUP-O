@@ -15,4 +15,3 @@ pdf2image
 pytesseract
 sentencepiece
 pyttsx3
-espeak-ng
