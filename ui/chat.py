@@ -1,11 +1,13 @@
 """
-ui/chat.py — conversation management and chat area rendering
+ui/chat.py — conversation management, chat rendering and TTS output
 """
 
+import os
 import re
 import time
 from datetime import datetime
 import streamlit as st
+
 from utils import nice_source_name, is_greeting
 from retrieval import retrieve_top_k
 from generation import generate_answer, format_response
@@ -35,7 +37,6 @@ def get_active_conv():
 
 
 def ensure_conversation():
-    """Create first conversation if none exist."""
     if not st.session_state.conversations:
         new_conversation()
     if st.session_state.active_conv_id is None and st.session_state.conversations:
@@ -43,10 +44,45 @@ def ensure_conversation():
 
 
 # ---------------------------------------------------------------------------
-# Chat area rendering
+# TTS helper
+# ---------------------------------------------------------------------------
+
+def _speak(answer: str):
+    """Generate a WAV file from answer text using pyttsx3 and store path in session state."""
+    try:
+        import pyttsx3
+        import tempfile
+        clean_ans = re.sub(r"[•*#_]", "", answer)
+        clean_ans = " ".join(clean_ans.split())[:800]
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        tmp.close()
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 160)
+        engine.setProperty("volume", 1.0)
+        engine.save_to_file(clean_ans, tmp.name)
+        engine.runAndWait()
+        engine.stop()
+        size = os.path.getsize(tmp.name)
+        if size > 1000:
+            st.session_state.last_audio      = tmp.name
+            st.session_state.last_audio_size = size
+            st.session_state.last_audio_err  = None
+        else:
+            st.session_state.last_audio_err = f"wav too small ({size} bytes)"
+    except Exception as e:
+        st.session_state.last_audio_err = f"{type(e).__name__}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Main chat renderer
 # ---------------------------------------------------------------------------
 
 def render_chat(df, embeddings, emb_model):
+    # make sure session state has needed keys
+    if "last_audio"      not in st.session_state: st.session_state.last_audio      = None
+    if "last_audio_size" not in st.session_state: st.session_state.last_audio_size = 0
+    if "last_audio_err"  not in st.session_state: st.session_state.last_audio_err  = None
+
     ensure_conversation()
     active_conv = get_active_conv()
 
@@ -107,6 +143,19 @@ def render_chat(df, embeddings, emb_model):
     if user_input and active_conv:
         _handle_user_input(user_input, active_conv, df, embeddings, emb_model)
 
+    # ── TTS audio player (shown after answer is generated) ──────────────────
+    if st.session_state.get("last_audio"):
+        st.caption(f"🔊 Listen to the answer ({st.session_state.last_audio_size} bytes)")
+        st.audio(st.session_state.last_audio, format="audio/wav")
+        st.session_state.last_audio = None
+    elif st.session_state.get("last_audio_err"):
+        st.caption(f"🔇 Voice output unavailable: {st.session_state.last_audio_err}")
+        st.session_state.last_audio_err = None
+
+
+# ---------------------------------------------------------------------------
+# Handle a single user message
+# ---------------------------------------------------------------------------
 
 def _handle_user_input(user_input, active_conv, df, embeddings, emb_model):
     with st.chat_message("user", avatar="🧑"):
@@ -133,6 +182,9 @@ def _handle_user_input(user_input, active_conv, df, embeddings, emb_model):
                 )
 
         st.markdown(answer)
+
+        # generate TTS audio
+        _speak(answer)
 
         if sources:
             tags = "".join(
