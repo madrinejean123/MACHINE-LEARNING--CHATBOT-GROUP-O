@@ -49,8 +49,8 @@ def load_whisper():
     from transformers import pipeline as hf_pipeline
     return hf_pipeline(
         "automatic-speech-recognition",
-        model="openai/whisper-tiny",
-        generate_kwargs={"language": "english", "task": "transcribe"},
+        model="openai/whisper-base",       # better than tiny, still free
+        generate_kwargs={"language": "en", "task": "transcribe"},
     )
 
 
@@ -863,17 +863,7 @@ html, body, [class*="css"] {{
     background:transparent !important; border:none !important; padding:4px 0 !important;
 }}
 hr {{ border-color:{BORDER} !important; }}
-/* Force sidebar visible and show the collapse arrow clearly */
-[data-testid="stSidebar"] {{
-    display: flex !important;
-    visibility: visible !important;
-}}
-[data-testid="collapsedControl"] {{
-    display: flex !important;
-    visibility: visible !important;
-    background: linear-gradient(135deg,#238636,#1f6feb) !important;
-    border-radius: 0 8px 8px 0 !important;
-}}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1033,6 +1023,7 @@ if active_conv:
 # ---------------------------------------------------------------------------
 
 with st.expander("🎙️ Speak your question instead of typing", expanded=False):
+    st.caption("💡 If you see 'An error occurred' — click the mic icon and allow microphone access in your browser, then try again.")
     audio_input = st.audio_input("Record your question here", key="mic_input")
     if audio_input is not None:
         with st.spinner("🎙️ Transcribing your voice…"):
