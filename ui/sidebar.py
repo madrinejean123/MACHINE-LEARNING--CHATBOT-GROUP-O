@@ -2,14 +2,15 @@
 ui/sidebar.py — renders the full sidebar: logo, conversations, settings, emergency contacts
 """
 
+import time
+from datetime import datetime
 import streamlit as st
 
 
 def render_sidebar(theme: dict):
-    BG       = theme["BG"]
-    BORDER   = theme["BORDER"]
-    TEXT     = theme["TEXT"]
-    SUBTEXT  = theme["SUBTEXT"]
+    BORDER  = theme["BORDER"]
+    TEXT    = theme["TEXT"]
+    SUBTEXT = theme["SUBTEXT"]
 
     with st.sidebar:
 
@@ -28,10 +29,16 @@ def render_sidebar(theme: dict):
         </div>
         """, unsafe_allow_html=True)
 
-        # New conversation button
+        # New conversation — no external import to avoid circular imports
         if st.button("✦  New conversation", use_container_width=True, key="new_chat_btn"):
-            from ui.chat import new_conversation
-            new_conversation()
+            conv_id = str(int(time.time() * 1000))
+            st.session_state.conversations.insert(0, {
+                "id":        conv_id,
+                "title":     "New conversation",
+                "messages":  [],
+                "timestamp": datetime.now().strftime("%H:%M"),
+            })
+            st.session_state.active_conv_id = conv_id
             st.rerun()
 
         # Recent chats label
@@ -46,11 +53,15 @@ def render_sidebar(theme: dict):
         if not st.session_state.conversations:
             st.markdown(
                 f'<div style="font-size:0.78rem;padding:8px 0;color:{SUBTEXT};">No conversations yet.</div>',
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
         else:
             for conv in st.session_state.conversations:
-                if st.button(f"💬  {conv['title']}", key=f"conv_{conv['id']}", use_container_width=True):
+                if st.button(
+                    f"💬  {conv['title']}",
+                    key=f"conv_{conv['id']}",
+                    use_container_width=True,
+                ):
                     st.session_state.active_conv_id = conv["id"]
                     st.rerun()
 
@@ -75,8 +86,10 @@ def render_sidebar(theme: dict):
             st.rerun()
 
         # Contrast slider
-        st.markdown(f'<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;color:{TEXT};">🔆 Contrast</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;color:{TEXT};">🔆 Contrast</div>',
+            unsafe_allow_html=True,
+        )
         nc = st.slider("contrast", 50, 150, st.session_state.contrast, 5,
                        label_visibility="collapsed", key="contrast_slider")
         if nc != st.session_state.contrast:
@@ -84,8 +97,10 @@ def render_sidebar(theme: dict):
             st.rerun()
 
         # Font size slider
-        st.markdown(f'<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;color:{TEXT};">🔡 Font size</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:0.72rem;margin-top:10px;margin-bottom:4px;color:{TEXT};">🔡 Font size</div>',
+            unsafe_allow_html=True,
+        )
         nf = st.slider("font", 12, 22, st.session_state.font_size, 1,
                        label_visibility="collapsed", key="font_slider")
         if nf != st.session_state.font_size:
