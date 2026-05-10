@@ -1,5 +1,5 @@
 """
-ui/styles.py — safe Streamlit CSS
+ui/styles.py — safe Streamlit CSS (sidebar-safe version)
 """
 
 import streamlit as st
@@ -16,7 +16,7 @@ def inject_css(
     _cont,
     _fsize,
 ):
-  st.markdown(f"""
+    st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Playfair+Display:wght@700&display=swap');
 
@@ -27,47 +27,17 @@ html, body, .stApp {{
     font-family: 'Sora', sans-serif !important;
     background-color: {BG} !important;
     font-size: {_fsize}px !important;
+    color: {TEXT} !important;
 }}
 
+/* Contrast control (safe) */
+.stApp {{
+    filter: contrast({_cont});
+}}
+
+/* Hide Streamlit default UI */
 #MainMenu, footer, header {{
     visibility: hidden;
-}}
-
-/* =========================
-   SIDEBAR (SAFE ZONE)
-========================= */
-[data-testid="stSidebar"] {{
-    background-color: {SIDEBAR_BG} !important;
-    border-right: 1px solid {BORDER} !important;
-}}
-
-/* ONLY style visible content, NOT structure */
-[data-testid="stSidebarContent"] {{
-    padding: 1rem !important;
-}}
-
-/* Safe text styling (no structural break) */
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] label {{
-    color: {TEXT};
-}}
-
-/* Buttons only */
-[data-testid="stSidebar"] .stButton > button {{
-    width: 100% !important;
-    background: rgba(255,255,255,0.03) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 8px !important;
-    color: {TEXT} !important;
-    font-size: 0.82rem !important;
-    text-align: left !important;
-    padding: 7px 10px !important;
-}}
-
-[data-testid="stSidebar"] .stButton > button:hover {{
-    background: rgba(88,166,255,0.07) !important;
-    border-color: {BORDER} !important;
 }}
 
 /* =========================
@@ -82,10 +52,26 @@ html, body, .stApp {{
     padding: 14px 20px !important;
 }}
 
+[data-testid="stChatInput"] textarea:focus {{
+    border-color: #58a6ff !important;
+    box-shadow: 0 0 0 3px rgba(88,166,255,.15) !important;
+}}
+
+[data-testid="stChatInput"] button {{
+    background: linear-gradient(135deg,#238636,#1f6feb) !important;
+    border-radius: 50% !important;
+    border: none !important;
+}}
+
 /* =========================
    CHAT MESSAGES
 ========================= */
-[data-testid="stChatMessage"],
+[data-testid="stChatMessage"] {{
+    background: transparent !important;
+    border: none !important;
+    padding: 6px 0 !important;
+}}
+
 [data-testid="stMarkdownContainer"] {{
     font-size: {_fsize}px !important;
     color: {TEXT} !important;
@@ -141,6 +127,9 @@ html, body, .stApp {{
 
 
 def get_theme_vars(dark_mode: bool, contrast: int, font_size: int) -> dict:
+    """
+    Theme variables (unchanged logic)
+    """
     _cont = contrast / 100
     _fsize = font_size
 
