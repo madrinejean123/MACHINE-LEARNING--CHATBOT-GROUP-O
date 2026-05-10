@@ -44,29 +44,34 @@ def text_to_speech(text):
         return None
 
 
+@st.cache_resource(show_spinner=False)
+def load_whisper():
+    from transformers import pipeline as hf_pipeline
+    return hf_pipeline(
+        "automatic-speech-recognition",
+        model="openai/whisper-tiny",
+        generate_kwargs={"language": "english", "task": "transcribe"},
+    )
+
+
 def transcribe_audio(audio_bytes):
-    """Transcribe voice input using whisper-tiny (free, runs locally)."""
+    """Transcribe voice input using whisper-tiny forced to English."""
     import tempfile, os
     debug_msgs = []
     try:
-        # Save audio bytes to a temp wav file first
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         tmp.write(audio_bytes.read())
         tmp.flush()
         tmp.close()
         debug_msgs.append(f"Audio saved: {os.path.getsize(tmp.name)} bytes")
 
-        from transformers import pipeline as hf_pipeline
-        debug_msgs.append("Whisper pipeline loading...")
-        transcriber = hf_pipeline(
-            "automatic-speech-recognition",
-            model="openai/whisper-tiny"
-        )
-        debug_msgs.append("Whisper loaded — transcribing...")
+        debug_msgs.append("Loading Whisper (cached after first run)...")
+        transcriber = load_whisper()
+        debug_msgs.append("Whisper ready — transcribing in English...")
         result = transcriber(tmp.name)
         os.unlink(tmp.name)
         text = result.get("text", "").strip()
-        debug_msgs.append(f"Raw result: {repr(result)}")
+        debug_msgs.append(f"Whisper result: {repr(text)}")
         return text, debug_msgs
     except Exception as e:
         debug_msgs.append(f"ERROR: {e}")
@@ -714,7 +719,7 @@ st.set_page_config(
     page_title="Safeguarding Companion",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded",  # always show sidebar on load
 )
 
 # ---------------------------------------------------------------------------
@@ -1060,16 +1065,23 @@ if user_input and active_conv:
         # Voice output — play answer aloud with full debug
         st.caption("🔊 Generating audio output...")
         try:
-            audio_path = text_to_speech(answer)
-            if audio_path:
-                import os
-                st.caption(f"🔍 TTS: audio file created ({os.path.getsize(audio_path)} bytes)")
-                st.audio(audio_path, format="audio/mp3")
-                st.caption("🔊 Tap play above to hear this answer read aloud")
+            from gtts import gTTS
+            import tempfile, os
+            clean = re.sub(r"[•*#_]", "", answer)
+            clean = re.sub(r"\s+", " ", clean).strip()[:800]
+            st.caption(f"🔍 TTS: text ready ({len(clean)} chars), calling gTTS...")
+            tts = gTTS(text=clean, lang="en", slow=False)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            tts.save(tmp.name)
+            size = os.path.getsize(tmp.name)
+            st.caption(f"🔍 TTS: mp3 saved ({size} bytes)")
+            if size > 0:
+                st.audio(tmp.name, format="audio/mp3")
+                st.caption("🔊 Tap play above to hear this answer")
             else:
-                st.caption("🔇 TTS returned None — gTTS may have failed silently")
+                st.caption("🔇 TTS: file was empty — gTTS wrote 0 bytes")
         except Exception as tts_err:
-            st.caption(f"🔇 TTS error: {tts_err}")
+            st.caption(f"🔇 TTS error: {type(tts_err).__name__}: {tts_err}")
 
         if sources:
             tags = "".join(
