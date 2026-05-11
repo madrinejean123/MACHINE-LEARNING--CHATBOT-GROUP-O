@@ -50,10 +50,10 @@ html, body, .stApp {
     color: var(--text-primary);
 }
 
-/* Remove default Streamlit padding */
+/* Restore normal Streamlit container — don't over-widen */
 .block-container {
-    padding: 0 !important;
-    max-width: 100% !important;
+    padding: 2rem 1.5rem 6rem !important;
+    max-width: 860px !important;
 }
 
 /* ── Sidebar ─────────────────────────────────────────────── */
@@ -136,11 +136,14 @@ html, body, .stApp {
     flex-shrink: 0;
 }
 
-/* ── Main chat area ──────────────────────────────────────── */
-.chat-container {
-    max-width: 820px;
-    margin: 0 auto;
-    padding: 2rem 1.5rem 6rem;
+/* ── Scrollable chat message area ───────────────────────── */
+[data-testid="stChatMessageContainer"],
+section.main > div:first-child {
+    overflow-y: auto !important;
+    max-height: calc(100vh - 160px) !important;
+    padding-bottom: 2rem !important;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
 }
 
 /* ── Welcome screen ──────────────────────────────────────── */
@@ -300,15 +303,16 @@ html, body, .stApp {
     font-size: 0.85em;
 }
 
-/* ── Chat input ──────────────────────────────────────────── */
+/* ── Chat input — stays inside the main column only ─────── */
 [data-testid="stChatInput"] {
     position: fixed !important;
     bottom: 0 !important;
-    left: 0 !important;
     right: 0 !important;
+    /* left respects the sidebar (~21rem default Streamlit sidebar) */
+    left: 21rem !important;
     z-index: 100 !important;
-    background: linear-gradient(to top, var(--bg-base) 60%, transparent) !important;
-    padding: 1rem 1.5rem 1.2rem !important;
+    background: linear-gradient(to top, var(--bg-base) 70%, transparent) !important;
+    padding: 0.8rem 2rem 1rem !important;
 }
 
 [data-testid="stChatInput"] textarea {
@@ -320,8 +324,6 @@ html, body, .stApp {
     font-size: 0.92rem !important;
     padding: 0.8rem 1rem !important;
     transition: border-color 0.2s !important;
-    max-width: 820px !important;
-    margin: 0 auto !important;
 }
 
 [data-testid="stChatInput"] textarea:focus {
@@ -363,6 +365,73 @@ hr {
     border-top: 1px solid var(--border) !important;
     margin: 1rem 1.2rem !important;
 }
+
+/* ── Voice input bar ─────────────────────────────────────── */
+.voice-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.55rem 1rem;
+    margin-bottom: 0.5rem;
+    transition: border-color 0.2s;
+}
+
+.voice-bar.listening {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 3px rgba(47,181,160,0.12);
+}
+
+.mic-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+}
+
+.mic-btn:hover { transform: scale(1.15); }
+.mic-btn.active { animation: pulse 1s infinite; }
+
+@keyframes pulse {
+    0%, 100% { filter: drop-shadow(0 0 4px var(--teal)); }
+    50%       { filter: drop-shadow(0 0 12px var(--teal)); }
+}
+
+.voice-transcript {
+    flex: 1;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.voice-transcript.has-text { color: var(--text-primary); font-style: normal; }
+
+.voice-send-btn {
+    background: var(--teal);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.78rem;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+}
+
+.voice-send-btn.visible { opacity: 1; pointer-events: auto; }
 
 /* ── Scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
@@ -524,7 +593,7 @@ def render_chat(df, embeddings, emb_model, session_id):
                     Ask me anything about Makerere University's safeguarding policies,
                     disability rights, sexual harassment procedures, and student protections.
                 </div>
-                <div class="welcome-hint">🎙️ You can speak your question instead of typing</div>
+                <div class="welcome-hint">🔊 Responses are read aloud automatically</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
