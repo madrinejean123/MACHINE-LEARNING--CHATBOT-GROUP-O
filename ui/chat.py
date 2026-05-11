@@ -1,221 +1,209 @@
 """
-ui/chat.py — conversation management, chat rendering and TTS output
+ui/chat.py — ChatGPT-style chat + REAL voice input (Streamlit + Whisper)
+Hugging Face safe version
 """
 
 import os
-import re
 import time
+import re
 from datetime import datetime
 import streamlit as st
 
-from utils import nice_source_name, is_greeting
+from utils import is_greeting
 from retrieval import retrieve_top_k
 from generation import generate_answer, format_response
 from config import GREETING_RESPONSE, SUGGESTIONS
-
-# ✅ ADD DB
 from db import save_message, load_messages
 
 
-# ---------------------------------------------------------------------------
-# Conversation helpers
-# ---------------------------------------------------------------------------
+# ==========================================================
+# OPTIONAL MIC (NEW)
+# ==========================================================
+try:
+    from streamlit_mic_recorder import mic_recorder
+    MIC_AVAILABLE = True
+except:
+    MIC_AVAILABLE = False
+
+
+# ==========================================================
+# CONVERSATION MANAGEMENT
+# ==========================================================
 
 def new_conversation():
-    conv_id = str(int(time.time() * 1000))
+    cid = str(int(time.time() * 1000))
 
     st.session_state.conversations.insert(0, {
-        "id": conv_id,
-        "title": "New conversation",
+        "id": cid,
+        "title": "New chat",
         "messages": [],
         "timestamp": datetime.now().strftime("%H:%M"),
     })
 
-    st.session_state.active_conv_id = conv_id
+    st.session_state.active_conv_id = cid
 
 
-def get_active_conv():
-    for conv in st.session_state.conversations:
-        if conv["id"] == st.session_state.active_conv_id:
-            return conv
+def get_active():
+    for c in st.session_state.conversations:
+        if c["id"] == st.session_state.active_conv_id:
+            return c
     return None
 
 
-def ensure_conversation():
+def ensure():
     if not st.session_state.conversations:
         new_conversation()
-
-    if st.session_state.active_conv_id is None:
+    if not st.session_state.active_conv_id:
         st.session_state.active_conv_id = st.session_state.conversations[0]["id"]
 
 
-# ---------------------------------------------------------------------------
-# TTS helper (UNCHANGED)
-# ---------------------------------------------------------------------------
+# ==========================================================
+# WHISPER TRANSCRIPTION (REAL VOICE INPUT)
+# ==========================================================
 
-def _speak(answer: str):
+def transcribe_audio(audio_bytes):
     try:
-        import pyttsx3
+        import whisper
         import tempfile
 
-        clean_ans = re.sub(r"[•*#_]", "", answer)
-        clean_ans = " ".join(clean_ans.split())[:800]
+        model = whisper.load_model("base")
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        tmp.write(audio_bytes)
         tmp.close()
 
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 160)
-        engine.setProperty("volume", 1.0)
-        engine.save_to_file(clean_ans, tmp.name)
-        engine.runAndWait()
-        engine.stop()
-
-        size = os.path.getsize(tmp.name)
-
-        if size > 1000:
-            st.session_state.last_audio = tmp.name
-            st.session_state.last_audio_size = size
-            st.session_state.last_audio_err = None
-        else:
-            st.session_state.last_audio_err = f"wav too small ({size} bytes)"
+        result = model.transcribe(tmp.name)
+        return result["text"].strip()
 
     except Exception as e:
-        st.session_state.last_audio_err = f"{type(e).__name__}: {e}"
+        st.error(f"Voice error: {e}")
+        return ""
 
 
-# ---------------------------------------------------------------------------
-# MAIN CHAT RENDERER (UPDATED WITH DB + SESSION)
-# ---------------------------------------------------------------------------
+# ==========================================================
+# CHAT UI (ChatGPT STYLE)
+# ==========================================================
+
+def render_welcome():
+    st.markdown("""
+    <div style="text-align:center;padding:40px;">
+        <div style="font-size:48px;">🛡️</div>
+        <h2>Safeguarding Companion</h2>
+        <p style="color:#aaa;">
+            Ask about university policies, rights, and safety procedures.
+        </p>
+        <p style="color:#777;">Type or use 🎤 voice below</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    cols = st.columns(len(SUGGESTIONS))
+    for i, s in enumerate(SUGGESTIONS):
+        with cols[i]:
+            if st.button(s):
+                st.session_state.suggested = s
+                st.rerun()
+
+
+# ==========================================================
+# MAIN RENDER
+# ==========================================================
 
 def render_chat(df, embeddings, emb_model, session_id):
 
-    if "last_audio" not in st.session_state:
-        st.session_state.last_audio = None
-    if "last_audio_size" not in st.session_state:
-        st.session_state.last_audio_size = 0
-    if "last_audio_err" not in st.session_state:
-        st.session_state.last_audio_err = None
+    ensure()
+    conv = get_active()
 
-    ensure_conversation()
-    active_conv = get_active_conv()
+    # LOAD DB HISTORY
+    if conv:
+        msgs = load_messages(session_id, conv["id"])
+        if msgs and not conv["messages"]:
+            for r, m, _ in msgs:
+                conv["messages"].append({"role": r, "content": m})
 
-    # ==========================================================
-    # LOAD CHAT HISTORY FROM DB (NEW)
-    # ==========================================================
-    if active_conv:
-        db_messages = load_messages(session_id, active_conv["id"])
+    # WELCOME
+    if conv and len(conv["messages"]) == 0:
+        render_welcome()
 
-        if db_messages and not active_conv["messages"]:
-            for role, msg, _ in db_messages:
-                active_conv["messages"].append({
-                    "role": role,
-                    "content": msg
-                })
+    # CHAT HISTORY
+    if conv:
+        for m in conv["messages"]:
+            with st.chat_message(m["role"], avatar="🛡️" if m["role"]=="assistant" else "🧑"):
+                st.markdown(m["content"])
 
-    # ==========================================================
-    # WELCOME SCREEN
-    # ==========================================================
-    if active_conv and not active_conv["messages"]:
-        st.markdown("""
-        <div class="welcome-wrapper">
-            <div class="welcome-box">
-                <div class="welcome-icon">🛡️</div>
-                <div class="welcome-title">How can I help you today?</div>
-                <div class="welcome-text">
-                    Ask me anything about Makerere University's safeguarding policies,
-                    disability rights, sexual harassment procedures, and student protections.
-                </div>
-                <div class="welcome-hint">
-                    🎙️ Speak your question instead of typing
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # ======================================================
+    # 🔥 VOICE INPUT SECTION (NEW)
+    # ======================================================
 
-        cols = st.columns(len(SUGGESTIONS))
-        for col, suggestion in zip(cols, SUGGESTIONS):
-            with col:
-                if st.button(suggestion, key=f"sug_{suggestion[:20]}"):
-                    st.session_state.suggested_query = suggestion
-                    st.rerun()
+    st.markdown("### 🎤 Voice Input")
 
-    # ==========================================================
-    # CHAT HISTORY DISPLAY
-    # ==========================================================
-    if active_conv:
-        for msg in active_conv["messages"]:
-            with st.chat_message(msg["role"], avatar="🛡️" if msg["role"] == "assistant" else "🧑"):
-                st.markdown(msg["content"], unsafe_allow_html=True)
+    voice_text = ""
 
-    # ==========================================================
-    # INPUT
-    # ==========================================================
-    user_input = st.chat_input("Type your question here…")
+    if MIC_AVAILABLE:
+        audio = mic_recorder(
+            start_prompt="🎤 Start Recording",
+            stop_prompt="⏹ Stop Recording",
+            key="mic"
+        )
 
-    if st.session_state.suggested_query and not user_input:
-        user_input = st.session_state.suggested_query
-        st.session_state.suggested_query = None
+        if audio and audio.get("bytes"):
+            with st.spinner("Transcribing voice..."):
+                voice_text = transcribe_audio(audio["bytes"])
+    else:
+        st.warning("Mic not installed. Run: pip install streamlit-mic-recorder")
 
-    if user_input and active_conv:
-        _handle_user_input(user_input, active_conv, df, embeddings, emb_model, session_id)
+    # ======================================================
+    # TEXT INPUT
+    # ======================================================
 
-    # ==========================================================
-    # AUDIO OUTPUT
-    # ==========================================================
-    if st.session_state.get("last_audio"):
-        st.audio(st.session_state.last_audio, format="audio/wav")
-        st.session_state.last_audio = None
+    user_input = st.chat_input("Ask something...")
+
+    if st.session_state.get("suggested"):
+        user_input = st.session_state.suggested
+        st.session_state.suggested = None
+
+    # voice overrides text
+    if voice_text:
+        user_input = voice_text
+
+    if user_input:
+        handle(user_input, conv, df, embeddings, emb_model, session_id)
 
 
-# ---------------------------------------------------------------------------
-# HANDLE USER MESSAGE (UPDATED WITH DB SAVE)
-# ---------------------------------------------------------------------------
+# ==========================================================
+# MESSAGE HANDLER
+# ==========================================================
 
-def _handle_user_input(user_input, active_conv, df, embeddings, emb_model, session_id):
+def handle(user_input, conv, df, embeddings, emb_model, session_id):
 
-    with st.chat_message("user", avatar="🧑"):
+    with st.chat_message("user"):
         st.markdown(user_input)
+🛡️
+How can I help you today?
+Ask me anything about Makerere University's safeguarding policies, disability rights, sexual harassment procedures, and student protections.
+🎙️ Speak your question instead of typing
 
-    active_conv["messages"].append({"role": "user", "content": user_input})
 
-    # SAVE USER MESSAGE
-    save_message(
-        session_id,
-        active_conv["id"],
-        "user",
-        user_input,
-        datetime.now().isoformat()
-    )
+    conv["messages"].append({"role": "user", "content": user_input})
 
-    if active_conv["title"] == "New conversation":
-        active_conv["title"] = user_input[:45]
+    save_message(session_id, conv["id"], "user", user_input, datetime.now().isoformat())
+
+    if conv["title"] == "New chat":
+        conv["title"] = user_input[:40]
 
     with st.chat_message("assistant", avatar="🛡️"):
-        with st.spinner("Searching policy documents..."):
+        with st.spinner("Thinking..."):
 
             if is_greeting(user_input):
                 answer = GREETING_RESPONSE
-                sources = []
             else:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
                 raw = generate_answer(user_input, retrieved)
                 answer = format_response(raw)
-                sources = []
 
         st.markdown(answer)
 
-        _speak(answer)
+    save_message(session_id, conv["id"], "assistant", answer, datetime.now().isoformat())
 
-    # SAVE ASSISTANT MESSAGE
-    save_message(
-        session_id,
-        active_conv["id"],
-        "assistant",
-        answer,
-        datetime.now().isoformat()
-    )
-
-    active_conv["messages"].append({"role": "assistant", "content": answer})
+    conv["messages"].append({"role": "assistant", "content": answer})
 
     st.rerun()
