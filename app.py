@@ -1,209 +1,205 @@
 """
-app.py — Safeguarding Companion (Streamlit ChatGPT-style UI)
+app.py — entry point for the eSafeRide Safeguarding Companion
+All logic lives in separate modules — this file just wires them together.
 """
 
 import streamlit as st
-from db import init_db, verify_user, create_user
+from db import init_db
 
+# Initialize database
 init_db()
 
 # ===========================================================================
-# PAGE CONFIG
+# 1. PAGE CONFIG
 # ===========================================================================
 st.set_page_config(
     page_title="Safeguarding Companion",
     page_icon="🛡️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ===========================================================================
-# SESSION STATE
+# 2. DB AUTH IMPORT
 # ===========================================================================
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+from db import verify_user, create_user
 
 # ===========================================================================
-# LOGIN UI (CENTERED CHATGPT-STYLE CARD)
+# 3. SESSION STATE
 # ===========================================================================
-if not st.session_state.user:
+if "user_email" not in st.session_state:
+    st.session_state.user_email = None
 
-    st.markdown("""
-    <style>
-    .login-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 90vh;
-    }
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
 
-    .login-box {
-        width: 360px;
-        padding: 28px;
-        border-radius: 16px;
-        background: #0f172a;
-        border: 1px solid #1e293b;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.4);
-    }
+if "contrast" not in st.session_state:
+    st.session_state.contrast = 100
 
-    .login-title {
-        font-size: 22px;
-        font-weight: 600;
-        text-align: center;
-        margin-bottom: 18px;
-        color: white;
-    }
+if "font_size" not in st.session_state:
+    st.session_state.font_size = 16
 
-    .small {
-        font-size: 12px;
-        color: #94a3b8;
-        text-align: center;
-        margin-bottom: 18px;
-    }
+if "conversations" not in st.session_state:
+    st.session_state.conversations = []
 
-    input {
-        width: 100%;
-        padding: 10px;
-        margin-bottom: 10px;
-        border-radius: 10px;
-        border: 1px solid #334155;
-        background: #0b1220;
-        color: white;
-    }
+if "active_conv_id" not in st.session_state:
+    st.session_state.active_conv_id = None
 
-    .btn {
-        width: 100%;
-        padding: 10px;
-        border-radius: 10px;
-        background: #2563eb;
-        color: white;
-        border: none;
-        cursor: pointer;
-        margin-top: 8px;
-    }
+if "suggested_query" not in st.session_state:
+    st.session_state.suggested_query = None
 
-    .btn:hover {
-        background: #1d4ed8;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
-    st.markdown('<div class="login-container"><div class="login-box">', unsafe_allow_html=True)
+# ===========================================================================
+# 4. LOGIN SYSTEM
+# ===========================================================================
+if not st.session_state.user_email:
 
-    st.markdown('<div class="login-title">🛡 Safeguarding Companion</div>', unsafe_allow_html=True)
-    st.markdown('<div class="small">Makerere University Support System</div>', unsafe_allow_html=True)
+    st.title("🛡️ Safeguarding Companion Login")
 
     tab1, tab2 = st.tabs(["Login", "Register"])
 
+    # ---------------- LOGIN ----------------
     with tab1:
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
 
         if st.button("Login"):
             if verify_user(email, password):
-                st.session_state.user = email
+                st.session_state.user_email = email.lower().strip()
                 st.rerun()
             else:
-                st.error("Invalid credentials")
+                st.error("Invalid email or password")
 
+    # ---------------- REGISTER ----------------
     with tab2:
         new_email = st.text_input("New Email")
         new_password = st.text_input("New Password", type="password")
 
         if st.button("Create Account"):
-            create_user(new_email, new_password)
-            st.success("Account created")
+            try:
+                create_user(new_email, new_password)
+                st.success("Account created! Go to Login tab.")
+            except:
+                st.error("User already exists")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
     st.stop()
 
 
 # ===========================================================================
-# CHAT GPT STYLE HEADER
+# 5. THEME
+# ===========================================================================
+from ui.styles import get_theme_vars
+
+theme = get_theme_vars(
+    st.session_state.dark_mode,
+    st.session_state.contrast,
+    st.session_state.font_size,
+)
+
+
+# ===========================================================================
+# 6. GLOBAL CSS VARIABLES
+# ===========================================================================
+st.markdown(f"""
+<style>
+
+:root {{
+    --font-size: {theme["_fsize"]}px;
+    --text: {theme["TEXT"]};
+    --subtext: {theme["SUBTEXT"]};
+    --bg: {theme["BG"]};
+}}
+
+html, body, .stApp {{
+    background-color: var(--bg) !important;
+    font-size: var(--font-size) !important;
+}}
+
+.main-header {{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 0 18px;
+    border-bottom: 1px solid rgba(208,215,222,0.8);
+    margin-bottom: 24px;
+}}
+
+.main-logo {{
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: linear-gradient(135deg,#238636,#1f6feb);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+}}
+
+.main-title {{
+    font-family: 'Playfair Display', serif;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text);
+}}
+
+.main-sub {{
+    font-size: 0.75rem;
+    color: var(--subtext);
+}}
+
+.online-badge {{
+    margin-left: auto;
+    font-size: 0.68rem;
+    padding: 4px 12px;
+    border-radius: 20px;
+    background: rgba(35,134,54,0.15);
+    color: #238636;
+    border: 1px solid rgba(35,134,54,0.3);
+}}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# ===========================================================================
+# 7. SIDEBAR
+# ===========================================================================
+from ui.sidebar import render_sidebar
+render_sidebar(theme)
+
+
+# ===========================================================================
+# 8. HEADER UI
 # ===========================================================================
 st.markdown("""
-<style>
-.header {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:12px 18px;
-    border-bottom:1px solid #1e293b;
-    position:sticky;
-    top:0;
-    background:#0b1220;
-    z-index:100;
-}
-
-.title {
-    font-weight:600;
-    color:white;
-}
-
-.status {
-    font-size:12px;
-    color:#22c55e;
-}
-</style>
-
-<div class="header">
-    <div class="title">🛡 Safeguarding Companion</div>
-    <div class="status">● Online</div>
+<div class="main-header">
+  <div class="main-logo">🛡️</div>
+  <div>
+    <div class="main-title">Safeguarding Companion</div>
+    <div class="main-sub">Makerere University · Policy Q&A</div>
+  </div>
+  <div class="online-badge">● Online</div>
 </div>
 """, unsafe_allow_html=True)
 
+
 # ===========================================================================
-# LOAD MODELS (lazy import recommended)
+# 9. LOAD MODELS
 # ===========================================================================
 from models import load_everything
-from retrieval import retrieve_top_k
-from generation import generate_answer, format_response
-from config import GREETING_RESPONSE
 
-df, embeddings, emb_model = load_everything()
-
-# ===========================================================================
-# CHAT DISPLAY (ChatGPT style)
-# ===========================================================================
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+with st.spinner("Loading policy documents — first run takes a moment…"):
+    df, embeddings, emb_model = load_everything()
 
 
 # ===========================================================================
-# INPUT BAR (ChatGPT STYLE)
+# 10. CHAT (SESSION HANDLING)
 # ===========================================================================
-user_input = st.chat_input("Ask anything about safeguarding policies... 🎤")
+from ui.chat import render_chat
 
-# ===========================================================================
-# VOICE INPUT (simple upgrade placeholder)
-# ===========================================================================
-audio = st.audio_input("🎙 Voice input (optional)")
-
-if audio:
-    st.info("Voice detected (connect Whisper module here)")
-
-# ===========================================================================
-# PROCESS INPUT
-# ===========================================================================
-if user_input:
-
-    st.session_state.messages.append({"role": "user", "content": user_input})
-
-    with st.chat_message("user"):
-        st.markdown(user_input)
-
-    # greeting check
-    if user_input.lower().strip() in ["hi", "hello", "hey"]:
-        answer = GREETING_RESPONSE
-    else:
-        retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
-        raw = generate_answer(user_input, retrieved)
-        answer = format_response(raw)
-
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-
-    with st.chat_message("assistant"):
-        st.markdown(answer)
+render_chat(
+    df,
+    embeddings,
+    emb_model,
+    st.session_state.user_email
+)
