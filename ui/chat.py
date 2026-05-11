@@ -67,7 +67,7 @@ html, body, .stApp {
     font-size: 1.25rem;
     color: var(--accent);
     letter-spacing: 0.02em;
-    padding: 1.5rem 1.2rem 0.5rem;
+    padding: 3rem 1.2rem 0.5rem;
 }
 
 [data-testid="stSidebar"] .sidebar-subtitle {
