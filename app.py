@@ -43,20 +43,62 @@ if "suggested_query" not in st.session_state:
 
 
 # ===========================================================================
-# 4. LOGIN SYSTEM
+# 4. LOGIN SYSTEM (MODERN CENTERED CARD UI)
 # ===========================================================================
 if not st.session_state.user_email:
 
-    st.title("🛡️ Safeguarding Companion Login")
+    st.markdown("""
+    <style>
+
+    .auth-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 90vh;
+    }
+
+    .auth-card {
+        width: 380px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 18px;
+        padding: 28px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.45);
+        backdrop-filter: blur(12px);
+    }
+
+    .auth-title {
+        font-size: 20px;
+        font-weight: 600;
+        text-align: center;
+        color: white;
+        margin-bottom: 6px;
+    }
+
+    .auth-sub {
+        font-size: 12px;
+        text-align: center;
+        color: #aaa;
+        margin-bottom: 20px;
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="auth-container">', unsafe_allow_html=True)
+    st.markdown('<div class="auth-card">', unsafe_allow_html=True)
+
+    st.markdown('<div class="auth-title">🛡️ Safeguarding Companion</div>', unsafe_allow_html=True)
+    st.markdown('<div class="auth-sub">Login to continue</div>', unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["Login", "Register"])
 
     # ---------------- LOGIN ----------------
     with tab1:
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_pass")
 
-        if st.button("Login"):
+        if st.button("Login", use_container_width=True):
             if verify_user(email, password):
                 st.session_state.user_email = email.lower().strip()
                 st.rerun()
@@ -65,15 +107,18 @@ if not st.session_state.user_email:
 
     # ---------------- REGISTER ----------------
     with tab2:
-        new_email = st.text_input("New Email")
-        new_password = st.text_input("New Password", type="password")
+        new_email = st.text_input("New Email", key="reg_email")
+        new_password = st.text_input("New Password", type="password", key="reg_pass")
 
-        if st.button("Create Account"):
+        if st.button("Create Account", use_container_width=True):
             try:
                 create_user(new_email, new_password)
                 st.success("Account created! Go to Login tab.")
             except:
                 st.error("User already exists")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.stop()
 
@@ -185,7 +230,7 @@ with st.spinner("Loading policy documents — first run takes a moment…"):
 
 
 # ===========================================================================
-# 10. CHAT (NOW WITH USER SESSION FIX)
+# 10. CHAT
 # ===========================================================================
 from ui.chat import render_chat
 
