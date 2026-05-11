@@ -177,7 +177,7 @@ def handle(user_input, conv, df, embeddings, emb_model, session_id):
 
     with st.chat_message("user"):
         st.markdown(user_input)
-🛡️
+
 How can I help you today?
 Ask me anything about Makerere University's safeguarding policies, disability rights, sexual harassment procedures, and student protections.
 🎙️ Speak your question instead of typing
