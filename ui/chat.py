@@ -1,9 +1,7 @@
 """
-ui/chat.py — ChatGPT-style chat + REAL voice input (Streamlit + Whisper)
-Hugging Face safe version
+ui/chat.py — Clean ChatGPT-style Streamlit chat system (HF-safe)
 """
 
-import os
 import time
 import re
 from datetime import datetime
@@ -17,17 +15,7 @@ from db import save_message, load_messages
 
 
 # ==========================================================
-# OPTIONAL MIC (NEW)
-# ==========================================================
-try:
-    from streamlit_mic_recorder import mic_recorder
-    MIC_AVAILABLE = True
-except:
-    MIC_AVAILABLE = False
-
-
-# ==========================================================
-# CONVERSATION MANAGEMENT
+# CONVERSATION SETUP
 # ==========================================================
 
 def new_conversation():
@@ -51,61 +39,50 @@ def get_active():
 
 
 def ensure():
+    if "conversations" not in st.session_state:
+        st.session_state.conversations = []
+
     if not st.session_state.conversations:
         new_conversation()
+
     if not st.session_state.active_conv_id:
         st.session_state.active_conv_id = st.session_state.conversations[0]["id"]
 
 
 # ==========================================================
-# WHISPER TRANSCRIPTION (REAL VOICE INPUT)
-# ==========================================================
-
-def transcribe_audio(audio_bytes):
-    try:
-        import whisper
-        import tempfile
-
-        model = whisper.load_model("base")
-
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-        tmp.write(audio_bytes)
-        tmp.close()
-
-        result = model.transcribe(tmp.name)
-        return result["text"].strip()
-
-    except Exception as e:
-        st.error(f"Voice error: {e}")
-        return ""
-
-
-# ==========================================================
-# CHAT UI (ChatGPT STYLE)
+# WELCOME SCREEN (FIXED SAFE HTML STRING)
 # ==========================================================
 
 def render_welcome():
     st.markdown("""
-    <div style="text-align:center;padding:40px;">
-        <div style="font-size:48px;">🛡️</div>
-        <h2>Safeguarding Companion</h2>
-        <p style="color:#aaa;">
-            Ask about university policies, rights, and safety procedures.
+    <div style="
+        text-align:center;
+        padding:40px 20px;
+        border-radius:16px;
+        background:rgba(255,255,255,0.03);
+        border:1px solid rgba(255,255,255,0.08);
+        margin-bottom:20px;
+    ">
+        <div style="font-size:45px;">🛡️</div>
+
+        <h2 style="margin:10px 0; color:white;">
+            Safeguarding Companion
+        </h2>
+
+        <p style="color:#aaa; max-width:650px; margin:auto;">
+            Ask me anything about Makerere University safeguarding policies,
+            disability rights, sexual harassment procedures, and student protections.
         </p>
-        <p style="color:#777;">Type or use 🎤 voice below</p>
+
+        <p style="margin-top:12px; color:#777;">
+            Type your question below to begin
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
-    cols = st.columns(len(SUGGESTIONS))
-    for i, s in enumerate(SUGGESTIONS):
-        with cols[i]:
-            if st.button(s):
-                st.session_state.suggested = s
-                st.rerun()
-
 
 # ==========================================================
-# MAIN RENDER
+# MAIN CHAT UI
 # ==========================================================
 
 def render_chat(df, embeddings, emb_model, session_id):
@@ -113,60 +90,42 @@ def render_chat(df, embeddings, emb_model, session_id):
     ensure()
     conv = get_active()
 
-    # LOAD DB HISTORY
+    # ---------------- LOAD DB HISTORY ----------------
     if conv:
-        msgs = load_messages(session_id, conv["id"])
-        if msgs and not conv["messages"]:
-            for r, m, _ in msgs:
-                conv["messages"].append({"role": r, "content": m})
+        db_msgs = load_messages(session_id, conv["id"])
+        if db_msgs and not conv["messages"]:
+            for role, msg, _ in db_msgs:
+                conv["messages"].append({
+                    "role": role,
+                    "content": msg
+                })
 
-    # WELCOME
+    # ---------------- WELCOME ----------------
     if conv and len(conv["messages"]) == 0:
         render_welcome()
 
-    # CHAT HISTORY
+    # ---------------- CHAT HISTORY ----------------
     if conv:
-        for m in conv["messages"]:
-            with st.chat_message(m["role"], avatar="🛡️" if m["role"]=="assistant" else "🧑"):
-                st.markdown(m["content"])
+        for msg in conv["messages"]:
+            with st.chat_message(
+                msg["role"],
+                avatar="🛡️" if msg["role"] == "assistant" else "🧑"
+            ):
+                st.markdown(msg["content"])
 
-    # ======================================================
-    # 🔥 VOICE INPUT SECTION (NEW)
-    # ======================================================
-
-    st.markdown("### 🎤 Voice Input")
-
-    voice_text = ""
-
-    if MIC_AVAILABLE:
-        audio = mic_recorder(
-            start_prompt="🎤 Start Recording",
-            stop_prompt="⏹ Stop Recording",
-            key="mic"
-        )
-
-        if audio and audio.get("bytes"):
-            with st.spinner("Transcribing voice..."):
-                voice_text = transcribe_audio(audio["bytes"])
-    else:
-        st.warning("Mic not installed. Run: pip install streamlit-mic-recorder")
-
-    # ======================================================
-    # TEXT INPUT
-    # ======================================================
-
-    user_input = st.chat_input("Ask something...")
-
-    if st.session_state.get("suggested"):
-        user_input = st.session_state.suggested
-        st.session_state.suggested = None
-
-    # voice overrides text
-    if voice_text:
-        user_input = voice_text
+    # ---------------- INPUT ----------------
+    user_input = st.chat_input("Ask your question...")
 
     if user_input:
         handle(user_input, conv, df, embeddings, emb_model, session_id)
+
+    # ---------------- SUGGESTIONS ----------------
+    if conv and len(conv["messages"]) == 0:
+        cols = st.columns(len(SUGGESTIONS))
+        for i, s in enumerate(SUGGESTIONS):
+            with cols[i]:
+                if st.button(s):
+                    handle(s, conv, df, embeddings, emb_model, session_id)
 
 
 # ==========================================================
@@ -175,13 +134,9 @@ def render_chat(df, embeddings, emb_model, session_id):
 
 def handle(user_input, conv, df, embeddings, emb_model, session_id):
 
+    # USER MESSAGE
     with st.chat_message("user"):
         st.markdown(user_input)
-
-How can I help you today?
-Ask me anything about Makerere University's safeguarding policies, disability rights, sexual harassment procedures, and student protections.
-🎙️ Speak your question instead of typing
-
 
     conv["messages"].append({"role": "user", "content": user_input})
 
@@ -190,6 +145,7 @@ Ask me anything about Makerere University's safeguarding policies, disability ri
     if conv["title"] == "New chat":
         conv["title"] = user_input[:40]
 
+    # ASSISTANT RESPONSE
     with st.chat_message("assistant", avatar="🛡️"):
         with st.spinner("Thinking..."):
 
