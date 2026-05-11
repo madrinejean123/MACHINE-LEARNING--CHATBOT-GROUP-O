@@ -16,3 +16,4 @@ pytesseract
 sentencepiece
 pyttsx3
 openai-whisper
+streamlit-mic-recorder
