@@ -1,14 +1,4 @@
----
-title: Safeguarding Companion
-emoji: 🛡️
-colorFrom: green
-colorTo: blue
-sdk: streamlit
-sdk_version: 1.57.0
-app_file: app.py
-pinned: false
-license: mit
----
+# link to demo #:https://www.google.com/url?q=https%3A%2F%2Fmadrine-safeguarding-companion.hf.space
 
 # Safeguarding Companion
 
