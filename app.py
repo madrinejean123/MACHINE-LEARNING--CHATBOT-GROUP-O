@@ -115,6 +115,12 @@ html, body, .stApp {{
     font-size: var(--font-size) !important;
 }}
 
+/* ── Push the entire main block down so the header
+       clears Streamlit's native top bar (~56px tall) ── */
+.block-container {{
+    padding-top: 70px !important;
+}}
+
 .main-header {{
     display: flex;
     align-items: center;
