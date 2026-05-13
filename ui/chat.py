@@ -1,5 +1,5 @@
 """
-ui/chat.py — conversation management, chat rendering and TTS output
+ui/chat.py — conversation management, chat rendering, voice input and TTS output
 Redesigned with rich Streamlit styling for Makerere University Safeguarding Assistant
 """
 
@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 
 from utils import nice_source_name, is_greeting
 from retrieval import retrieve_top_k
@@ -50,7 +51,6 @@ html, body, .stApp {
     color: var(--text-primary);
 }
 
-/* Restore normal Streamlit container — don't over-widen */
 .block-container {
     padding: 2rem 1.5rem 6rem !important;
     max-width: 860px !important;
@@ -292,7 +292,6 @@ section.main > div:first-child {
 }
 
 .stMarkdown li { margin-bottom: 0.3rem; }
-
 .stMarkdown strong { color: var(--teal); }
 
 .stMarkdown code {
@@ -303,12 +302,49 @@ section.main > div:first-child {
     font-size: 0.85em;
 }
 
-/* ── Chat input — stays inside the main column only ─────── */
+/* ── Source citations block ──────────────────────────────── */
+.sources-block {
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(201,168,76,0.18);
+}
+
+.sources-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #4a6b66;
+    margin-bottom: 0.45rem;
+    font-weight: 500;
+}
+
+.source-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: rgba(201,168,76,0.09);
+    border: 1px solid rgba(201,168,76,0.22);
+    color: #c9a84c;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    padding: 0.28rem 0.75rem;
+    margin: 0.2rem 0.2rem 0 0;
+    font-family: 'DM Sans', sans-serif;
+    white-space: nowrap;
+    transition: background 0.18s;
+}
+
+.source-pill:hover {
+    background: rgba(201,168,76,0.18);
+}
+
+.source-pill-icon { font-size: 0.75rem; }
+
+/* ── Chat input ──────────────────────────────────────────── */
 [data-testid="stChatInput"] {
     position: fixed !important;
     bottom: 0 !important;
     right: 0 !important;
-    /* left respects the sidebar (~21rem default Streamlit sidebar) */
     left: 21rem !important;
     z-index: 100 !important;
     background: linear-gradient(to top, var(--bg-base) 70%, transparent) !important;
@@ -336,7 +372,6 @@ section.main > div:first-child {
     color: var(--text-muted) !important;
 }
 
-/* Send button */
 [data-testid="stChatInput"] button {
     background: var(--teal) !important;
     border: none !important;
@@ -346,10 +381,97 @@ section.main > div:first-child {
 
 [data-testid="stChatInput"] button:hover { opacity: 0.82 !important; }
 
-/* ── Spinner ─────────────────────────────────────────────── */
-[data-testid="stSpinner"] {
-    color: var(--teal) !important;
+/* ── Voice input bar ─────────────────────────────────────── */
+.voice-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: #162d32;
+    border: 1px solid #1f3d44;
+    border-radius: 14px;
+    padding: 0.55rem 1rem;
+    margin-bottom: 0.5rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    font-family: 'DM Sans', sans-serif;
 }
+
+.voice-bar.listening {
+    border-color: #2fb5a0;
+    box-shadow: 0 0 0 3px rgba(47,181,160,0.12);
+}
+
+.mic-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.3rem;
+    line-height: 1;
+    padding: 0.15rem;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+}
+
+.mic-btn:hover { transform: scale(1.18); }
+
+.mic-btn.active {
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { filter: drop-shadow(0 0 4px #2fb5a0); }
+    50%       { filter: drop-shadow(0 0 14px #2fb5a0); }
+}
+
+.voice-transcript {
+    flex: 1;
+    font-size: 0.87rem;
+    color: #8eaaa6;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.voice-transcript.has-text {
+    color: #eef2f0;
+    font-style: normal;
+}
+
+.voice-send-btn {
+    background: #2fb5a0;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.32rem 0.85rem;
+    font-size: 0.78rem;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.15s;
+    flex-shrink: 0;
+    font-weight: 500;
+}
+
+.voice-send-btn.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.voice-send-btn:hover { transform: translateY(-1px); }
+
+.voice-status {
+    font-size: 0.7rem;
+    color: #4a6b66;
+    flex-shrink: 0;
+    letter-spacing: 0.04em;
+}
+
+.voice-status.active { color: #2fb5a0; }
+
+/* ── Spinner ─────────────────────────────────────────────── */
+[data-testid="stSpinner"] { color: var(--teal) !important; }
 
 /* ── Audio player ────────────────────────────────────────── */
 audio {
@@ -366,73 +488,6 @@ hr {
     margin: 1rem 1.2rem !important;
 }
 
-/* ── Voice input bar ─────────────────────────────────────── */
-.voice-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.55rem 1rem;
-    margin-bottom: 0.5rem;
-    transition: border-color 0.2s;
-}
-
-.voice-bar.listening {
-    border-color: var(--teal);
-    box-shadow: 0 0 0 3px rgba(47,181,160,0.12);
-}
-
-.mic-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 1.2rem;
-    line-height: 1;
-    padding: 0;
-    transition: transform 0.15s;
-    flex-shrink: 0;
-}
-
-.mic-btn:hover { transform: scale(1.15); }
-.mic-btn.active { animation: pulse 1s infinite; }
-
-@keyframes pulse {
-    0%, 100% { filter: drop-shadow(0 0 4px var(--teal)); }
-    50%       { filter: drop-shadow(0 0 12px var(--teal)); }
-}
-
-.voice-transcript {
-    flex: 1;
-    font-size: 0.88rem;
-    color: var(--text-secondary);
-    font-style: italic;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-}
-
-.voice-transcript.has-text { color: var(--text-primary); font-style: normal; }
-
-.voice-send-btn {
-    background: var(--teal);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 0.3rem 0.75rem;
-    font-size: 0.78rem;
-    font-family: 'DM Sans', sans-serif;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
-    flex-shrink: 0;
-}
-
-.voice-send-btn.visible { opacity: 1; pointer-events: auto; }
-
 /* ── Scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
@@ -441,10 +496,234 @@ hr {
 </style>
 """
 
+# ---------------------------------------------------------------------------
+# Voice input HTML component (Web Speech API)
+# ---------------------------------------------------------------------------
+
+VOICE_INPUT_HTML = """
+<div class="voice-bar" id="voiceBar">
+    <button class="mic-btn" id="micBtn" title="Click to speak" onclick="toggleListening()">🎙️</button>
+    <span class="voice-transcript" id="transcript">Click the mic and speak your question…</span>
+    <span class="voice-status" id="voiceStatus">idle</span>
+    <button class="voice-send-btn" id="sendBtn" onclick="sendTranscript()">Send ↑</button>
+</div>
+
+<script>
+(function () {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    const micBtn      = document.getElementById('micBtn');
+    const voiceBar    = document.getElementById('voiceBar');
+    const transcript  = document.getElementById('transcript');
+    const voiceStatus = document.getElementById('voiceStatus');
+    const sendBtn     = document.getElementById('sendBtn');
+
+    let recognition = null;
+    let listening   = false;
+    let finalText   = '';
+
+    // ── browser support check ──────────────────────────────
+    if (!SpeechRecognition) {
+        transcript.textContent = '⚠ Voice input not supported in this browser. Try Chrome.';
+        micBtn.disabled = true;
+        micBtn.style.opacity = '0.4';
+        return;
+    }
+
+    // ── set up recognition ─────────────────────────────────
+    recognition = new SpeechRecognition();
+    recognition.continuous      = false;
+    recognition.interimResults  = true;
+    recognition.lang            = 'en-US';
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = function () {
+        listening = true;
+        micBtn.classList.add('active');
+        micBtn.textContent = '🔴';
+        voiceBar.classList.add('listening');
+        voiceStatus.textContent = 'listening…';
+        voiceStatus.classList.add('active');
+        transcript.textContent = '';
+        transcript.classList.remove('has-text');
+        sendBtn.classList.remove('visible');
+        finalText = '';
+    };
+
+    recognition.onresult = function (e) {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = e.results[i][0].transcript;
+            if (e.results[i].isFinal) {
+                finalText += t + ' ';
+            } else {
+                interim += t;
+            }
+        }
+        const display = (finalText + interim).trim();
+        transcript.textContent = display || '…';
+        if (display) {
+            transcript.classList.add('has-text');
+        }
+    };
+
+    recognition.onspeechend = function () {
+        recognition.stop();
+    };
+
+    recognition.onend = function () {
+        listening = false;
+        micBtn.classList.remove('active');
+        micBtn.textContent = '🎙️';
+        voiceBar.classList.remove('listening');
+        voiceStatus.classList.remove('active');
+
+        finalText = finalText.trim();
+
+        if (finalText) {
+            transcript.textContent = finalText;
+            transcript.classList.add('has-text');
+            voiceStatus.textContent = 'done';
+            sendBtn.classList.add('visible');
+        } else {
+            transcript.textContent = 'No speech detected. Try again.';
+            transcript.classList.remove('has-text');
+            voiceStatus.textContent = 'idle';
+        }
+    };
+
+    recognition.onerror = function (e) {
+        listening = false;
+        micBtn.classList.remove('active');
+        micBtn.textContent = '🎙️';
+        voiceBar.classList.remove('listening');
+        voiceStatus.classList.remove('active');
+        voiceStatus.textContent = 'error';
+
+        const msgs = {
+            'not-allowed'  : '🔒 Microphone access denied. Please allow mic in browser settings.',
+            'network'      : '📡 Network error during recognition.',
+            'no-speech'    : 'No speech detected. Try again.',
+            'aborted'      : 'Listening cancelled.',
+        };
+        transcript.textContent = msgs[e.error] || ('Error: ' + e.error);
+        transcript.classList.remove('has-text');
+    };
+
+    // ── toggle function ────────────────────────────────────
+    window.toggleListening = function () {
+        if (listening) {
+            recognition.stop();
+        } else {
+            try {
+                recognition.start();
+            } catch (err) {
+                transcript.textContent = 'Could not start: ' + err.message;
+            }
+        }
+    };
+
+    // ── send function — posts text to Streamlit ────────────
+    window.sendTranscript = function () {
+        const text = finalText.trim();
+        if (!text) return;
+
+        // Post to the Streamlit parent frame via component value
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: text
+        }, '*');
+
+        // Reset UI
+        transcript.textContent = 'Sending…';
+        transcript.classList.remove('has-text');
+        sendBtn.classList.remove('visible');
+        voiceStatus.textContent = 'sent';
+        finalText = '';
+
+        // Reset to idle after a moment
+        setTimeout(function () {
+            transcript.textContent = 'Click the mic and speak your question…';
+            voiceStatus.textContent = 'idle';
+        }, 1500);
+    };
+})();
+</script>
+"""
+
 
 def inject_styles():
     """Inject global CSS into the Streamlit app."""
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Voice input component wrapper
+# ---------------------------------------------------------------------------
+
+def render_voice_input() -> str | None:
+    """
+    Renders the Web Speech API mic bar as an iframe component.
+    Returns the recognised text string when the user clicks Send, else None.
+    """
+    result = components.html(
+        VOICE_INPUT_HTML,
+        height=68,
+        scrolling=False,
+    )
+    # components.html returns None until the component posts a value
+    if isinstance(result, str) and result.strip():
+        return result.strip()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Source citations renderer
+# ---------------------------------------------------------------------------
+
+def render_sources(retrieved: list) -> None:
+    """
+    Renders a row of source-pill badges below an assistant answer.
+
+    `retrieved` is whatever retrieve_top_k returns — expected to be a list of
+    dicts or objects that have at least a 'source' (or 'filename') field.
+    Adjust the key names below to match your actual retrieval schema.
+    """
+    if not retrieved:
+        return
+
+    # Collect unique source names
+    seen = set()
+    unique_sources = []
+    for item in retrieved:
+        # Support both dict and object-style retrieval results
+        if isinstance(item, dict):
+            raw = item.get("source") or item.get("filename") or item.get("title") or ""
+        else:
+            raw = getattr(item, "source", None) or getattr(item, "filename", None) or getattr(item, "title", None) or ""
+
+        name = nice_source_name(raw) if raw else ""
+        if name and name not in seen:
+            seen.add(name)
+            unique_sources.append(name)
+
+    if not unique_sources:
+        return
+
+    pills_html = "".join(
+        f'<span class="source-pill"><span class="source-pill-icon">📄</span>{src}</span>'
+        for src in unique_sources
+    )
+
+    st.markdown(
+        f"""
+        <div class="sources-block">
+            <div class="sources-label">📚 Sources consulted</div>
+            <div>{pills_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +774,6 @@ def render_sidebar():
 
         st.markdown("<hr>", unsafe_allow_html=True)
 
-        # Conversation list
         for conv in st.session_state.get("conversations", []):
             is_active = conv["id"] == st.session_state.get("active_conv_id")
             css_class = "conv-item active" if is_active else "conv-item"
@@ -511,12 +789,10 @@ def render_sidebar():
                 unsafe_allow_html=True,
             )
 
-            # Invisible button overlay to make the item clickable
             if st.button("_", key=f"sel_conv_{conv['id']}", label_visibility="collapsed"):
                 st.session_state.active_conv_id = conv["id"]
                 st.rerun()
 
-        # Footer
         st.markdown(
             '<div style="position:fixed;bottom:1rem;left:0;right:0;'
             'text-align:center;font-size:0.68rem;color:#4a6b66;">'
@@ -564,11 +840,15 @@ def _speak(answer: str):
 # ---------------------------------------------------------------------------
 
 def render_chat(df, embeddings, emb_model, session_id):
-    # Inject styles on every render
     inject_styles()
 
-    # Initialise audio state
-    for key, default in [("last_audio", None), ("last_audio_size", 0), ("last_audio_err", None)]:
+    # Initialise state keys
+    for key, default in [
+        ("last_audio", None),
+        ("last_audio_size", 0),
+        ("last_audio_err", None),
+        ("voice_input", None),
+    ]:
         if key not in st.session_state:
             st.session_state[key] = default
 
@@ -593,12 +873,11 @@ def render_chat(df, embeddings, emb_model, session_id):
                     Ask me anything about Makerere University's safeguarding policies,
                     disability rights, sexual harassment procedures, and student protections.
                 </div>
-                <div class="welcome-hint">🔊 Responses are read aloud automatically</div>
+                <div class="welcome-hint">🎙️ You can speak or type your question below</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # Suggestion chips
         cols = st.columns(len(SUGGESTIONS))
         for col, suggestion in zip(cols, SUGGESTIONS):
             with col:
@@ -606,17 +885,31 @@ def render_chat(df, embeddings, emb_model, session_id):
                     st.session_state.suggested_query = suggestion
                     st.rerun()
 
-    # ── Chat history ──────────────────────────────────────────
+    # ── Chat history (with cached sources) ───────────────────
     if active_conv:
         for msg in active_conv["messages"]:
             avatar = "🛡️" if msg["role"] == "assistant" else "🧑"
             with st.chat_message(msg["role"], avatar=avatar):
                 st.markdown(msg["content"], unsafe_allow_html=True)
+                # Re-render stored sources for assistant messages
+                if msg["role"] == "assistant" and msg.get("sources"):
+                    render_sources(msg["sources"])
 
-    # ── Input ─────────────────────────────────────────────────
+    # ── Voice input bar ───────────────────────────────────────
+    voice_result = render_voice_input()
+    if voice_result:
+        st.session_state.voice_input = voice_result
+        st.rerun()
+
+    # ── Text input ────────────────────────────────────────────
     user_input = st.chat_input("Type your question here…")
 
-    if st.session_state.get("suggested_query") and not user_input:
+    # Priority: typed > voice > suggestion chip
+    if not user_input and st.session_state.get("voice_input"):
+        user_input = st.session_state.voice_input
+        st.session_state.voice_input = None
+
+    if not user_input and st.session_state.get("suggested_query"):
         user_input = st.session_state.suggested_query
         st.session_state.suggested_query = None
 
@@ -635,7 +928,6 @@ def render_chat(df, embeddings, emb_model, session_id):
 
 def _handle_user_input(user_input, active_conv, df, embeddings, emb_model, session_id):
 
-    # Show user bubble immediately
     with st.chat_message("user", avatar="🧑"):
         st.markdown(user_input)
 
@@ -649,21 +941,25 @@ def _handle_user_input(user_input, active_conv, df, embeddings, emb_model, sessi
         datetime.now().isoformat(),
     )
 
-    # Update conversation title from first message
     if active_conv["title"] == "New conversation":
         active_conv["title"] = user_input[:45]
 
-    # Generate and show assistant response
     with st.chat_message("assistant", avatar="🛡️"):
         with st.spinner("Searching policy documents…"):
             if is_greeting(user_input):
                 answer = GREETING_RESPONSE
+                retrieved = []
             else:
                 retrieved = retrieve_top_k(user_input, emb_model, embeddings, df)
                 raw = generate_answer(user_input, retrieved)
                 answer = format_response(raw)
 
         st.markdown(answer, unsafe_allow_html=True)
+
+        # ── Show source citations ─────────────────────────────
+        render_sources(retrieved)
+
+        # ── TTS output ────────────────────────────────────────
         _speak(answer)
 
     save_message(
@@ -674,5 +970,11 @@ def _handle_user_input(user_input, active_conv, df, embeddings, emb_model, sessi
         datetime.now().isoformat(),
     )
 
-    active_conv["messages"].append({"role": "assistant", "content": answer})
+    # Store sources alongside the message so they re-render on reload
+    active_conv["messages"].append({
+        "role": "assistant",
+        "content": answer,
+        "sources": retrieved,
+    })
+
     st.rerun()
