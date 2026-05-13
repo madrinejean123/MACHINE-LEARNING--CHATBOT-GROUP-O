@@ -319,6 +319,16 @@ theme = get_theme_vars(
 )
 
 
+# Re-inject font size now that we have the theme value from the slider
+st.markdown(f"""
+<style>
+html, body, .stApp, p, div, span, li, td, th {{
+    font-size: {theme["_fsize"]}px !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+
+
 # ===========================================================================
 # 7. SIDEBAR
 # ===========================================================================
