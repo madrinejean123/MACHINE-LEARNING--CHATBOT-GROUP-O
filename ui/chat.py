@@ -501,6 +501,51 @@ hr {
 # ---------------------------------------------------------------------------
 
 VOICE_INPUT_HTML = """
+<style>
+  body { margin:0; background:#162d32; font-family:'DM Sans',sans-serif; }
+  .voice-bar {
+    display:flex; align-items:center; gap:0.75rem;
+    background:#162d32; border:1px solid #1f3d44;
+    border-radius:14px; padding:0.55rem 1rem;
+    transition:border-color 0.2s, box-shadow 0.2s;
+  }
+  .voice-bar.listening {
+    border-color:#2fb5a0;
+    box-shadow:0 0 0 3px rgba(47,181,160,0.12);
+  }
+  .mic-btn {
+    background:none; border:none; cursor:pointer;
+    font-size:1.3rem; line-height:1; padding:0.15rem;
+    transition:transform 0.15s; flex-shrink:0;
+  }
+  .mic-btn:hover { transform:scale(1.18); }
+  .mic-btn.active { animation:pulse 1s infinite; }
+  @keyframes pulse {
+    0%,100% { filter:drop-shadow(0 0 4px #2fb5a0); }
+    50%      { filter:drop-shadow(0 0 14px #2fb5a0); }
+  }
+  .voice-transcript {
+    flex:1; font-size:0.87rem; color:#8eaaa6;
+    font-style:italic; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; min-width:0;
+  }
+  .voice-transcript.has-text { color:#eef2f0; font-style:normal; }
+  .voice-status {
+    font-size:0.7rem; color:#4a6b66;
+    flex-shrink:0; letter-spacing:0.04em;
+  }
+  .voice-status.active { color:#2fb5a0; }
+  .voice-send-btn {
+    background:#2fb5a0; color:#fff; border:none;
+    border-radius:8px; padding:0.32rem 0.85rem;
+    font-size:0.78rem; cursor:pointer;
+    opacity:0; pointer-events:none;
+    transition:opacity 0.2s, transform 0.15s;
+    flex-shrink:0; font-weight:500;
+  }
+  .voice-send-btn.visible { opacity:1; pointer-events:auto; }
+  .voice-send-btn:hover { transform:translateY(-1px); }
+</style>
 <div class="voice-bar" id="voiceBar">
     <button class="mic-btn" id="micBtn" title="Click to speak" onclick="toggleListening()">🎙️</button>
     <span class="voice-transcript" id="transcript">Click the mic and speak your question…</span>
@@ -681,28 +726,48 @@ def render_voice_input() -> str | None:
 # Source citations renderer
 # ---------------------------------------------------------------------------
 
-def render_sources(retrieved: list) -> None:
+def render_sources(retrieved) -> None:
     """
-    Renders a row of source-pill badges below an assistant answer.
+    Renders source-pill badges below an assistant answer.
+    Handles DataFrames (from retrieve_top_k) and lists of dicts/objects.
+    """
+    import pandas as pd
 
-    `retrieved` is whatever retrieve_top_k returns — expected to be a list of
-    dicts or objects that have at least a 'source' (or 'filename') field.
-    Adjust the key names below to match your actual retrieval schema.
-    """
-    if not retrieved:
+    if retrieved is None:
+        return
+
+    # ── DataFrame path ────────────────────────────────────────
+    if isinstance(retrieved, pd.DataFrame):
+        if retrieved.empty:
+            return
+        col = None
+        for candidate in ["source_document", "source", "filename", "title", "file", "doc"]:
+            if candidate in retrieved.columns:
+                col = candidate
+                break
+        if col is None:
+            return
+        raw_names = retrieved[col].dropna().tolist()
+
+    # ── List path ─────────────────────────────────────────────
+    elif isinstance(retrieved, list):
+        if not retrieved:
+            return
+        raw_names = []
+        for item in retrieved:
+            if isinstance(item, dict):
+                raw = item.get("source") or item.get("filename") or item.get("title") or ""
+            else:
+                raw = getattr(item, "source", None) or getattr(item, "filename", None) or getattr(item, "title", None) or ""
+            raw_names.append(raw)
+    else:
         return
 
     # Collect unique source names
     seen = set()
     unique_sources = []
-    for item in retrieved:
-        # Support both dict and object-style retrieval results
-        if isinstance(item, dict):
-            raw = item.get("source") or item.get("filename") or item.get("title") or ""
-        else:
-            raw = getattr(item, "source", None) or getattr(item, "filename", None) or getattr(item, "title", None) or ""
-
-        name = nice_source_name(raw) if raw else ""
+    for raw in raw_names:
+        name = nice_source_name(str(raw)) if raw else ""
         if name and name not in seen:
             seen.add(name)
             unique_sources.append(name)
