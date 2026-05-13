@@ -736,6 +736,7 @@ def render_chat(df, embeddings, emb_model, session_id):
         ("last_audio", None),
         ("last_audio_size", 0),
         ("last_audio_err", None),
+        ("audio_played", False),
         ("voice_input", None),
     ]:
         if key not in st.session_state:
@@ -789,10 +790,11 @@ def render_chat(df, embeddings, emb_model, session_id):
                         render_sources(msg["sources"])
 
     # ── Voice input bar ───────────────────────────────────────
+    # Don't rerun on voice result — just store it and let the
+    # normal input handling below pick it up in the same cycle.
     voice_result = render_voice_input()
     if voice_result:
         st.session_state.voice_input = voice_result
-        st.rerun()
 
     # ── Text input ────────────────────────────────────────────
     user_input = st.chat_input("Type your question here…")
@@ -810,9 +812,17 @@ def render_chat(df, embeddings, emb_model, session_id):
         _handle_user_input(user_input, active_conv, df, embeddings, emb_model, session_id)
 
     # ── Audio playback ────────────────────────────────────────
+    # Play audio if available. We clear it only AFTER rendering so
+    # st.rerun() in _handle_user_input doesn't wipe it before playback.
     if st.session_state.get("last_audio"):
-        st.audio(st.session_state.last_audio, format="audio/wav")
-        st.session_state.last_audio = None
+        audio_path = st.session_state.last_audio
+        if st.session_state.get("audio_played"):
+            # Second run — safe to clear now
+            st.session_state.last_audio = None
+            st.session_state.audio_played = False
+        else:
+            st.audio(audio_path, format="audio/wav")
+            st.session_state.audio_played = True
 
 
 # ---------------------------------------------------------------------------
