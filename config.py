@@ -47,7 +47,7 @@ GREETINGS = {
 GREETING_RESPONSE = (
     "Hello! Welcome to the Safeguarding Companion.\n\n"
     "I'm here to help you understand university policies on safeguarding, "
-    "disability rights, sexual harassment, and more — in plain, simple English.\n\n"
+    "disability rights, sexual harassment etc.\n\n"
     "You can ask things like:\n"
     "- How do I report harassment?\n"
     "- What rights do students with disabilities have?\n"
