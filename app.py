@@ -125,6 +125,11 @@ header[data-testid="stHeader"] {{
     display: none !important;
 }}
 
+/* ── Keep sidebar toggle button visible ── */
+[data-testid="collapsedControl"] {{
+    display: flex !important;
+}}
+
 /* ── Remove the top gap that was compensating for it ── */
 .block-container {{
     padding-top: 20px !important;
@@ -203,7 +208,7 @@ st.markdown("""
 # ===========================================================================
 from models import load_everything
 
-with st.spinner("Loading policy documents — first run takes a moment…"):
+with st.spinner("Loading policy documents .... first run takes a moment ..."):
     df, embeddings, emb_model = load_everything()
 
 
