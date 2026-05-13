@@ -300,7 +300,7 @@ if not st.session_state.user_email:
         st.markdown("""
         <div style='text-align:center;margin-top:1.8rem;
                     font-size:0.7rem;color:#4a6b66;letter-spacing:0.05em;'>
-            PROTECTED · MAKERERE UNIVERSITY SAFEGUARD V2
+            PROTECTED · MAKERERE UNIVERSITY 
         </div>
         """, unsafe_allow_html=True)
 
