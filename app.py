@@ -115,24 +115,9 @@ html, body, .stApp {{
     font-size: var(--font-size) !important;
 }}
 
-/* ── Hide Streamlit's native top bar entirely ── */
-header[data-testid="stHeader"] {{
-    display: none !important;
-}}
-
-/* ── Also hide the toolbar (Deploy button etc.) ── */
-[data-testid="stToolbar"] {{
-    display: none !important;
-}}
-
-/* ── Keep sidebar toggle button visible ── */
-[data-testid="collapsedControl"] {{
-    display: flex !important;
-}}
-
-/* ── Remove the top gap that was compensating for it ── */
+/* ── Push content down well below Streamlit's native top bar ── */
 .block-container {{
-    padding-top: 20px !important;
+    padding-top: 100px !important;
 }}
 
 .main-header {{
