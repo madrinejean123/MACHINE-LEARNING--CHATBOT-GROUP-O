@@ -115,12 +115,8 @@ html, body, .stApp {{
     font-size: var(--font-size) !important;
 }}
 
-/* ── Push content down well below Streamlit's native top bar ── */
-.block-container {{
-    padding-top: 100px !important;
-}}
-
 .main-header {{
+    margin-top: 60px;
     display: flex;
     align-items: center;
     gap: 14px;
