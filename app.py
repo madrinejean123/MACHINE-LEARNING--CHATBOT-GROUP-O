@@ -115,10 +115,19 @@ html, body, .stApp {{
     font-size: var(--font-size) !important;
 }}
 
-/* ── Push the entire main block down so the header
-       clears Streamlit's native top bar (~56px tall) ── */
+/* ── Hide Streamlit's native top bar entirely ── */
+header[data-testid="stHeader"] {{
+    display: none !important;
+}}
+
+/* ── Also hide the toolbar (Deploy button etc.) ── */
+[data-testid="stToolbar"] {{
+    display: none !important;
+}}
+
+/* ── Remove the top gap that was compensating for it ── */
 .block-container {{
-    padding-top: 70px !important;
+    padding-top: 20px !important;
 }}
 
 .main-header {{
