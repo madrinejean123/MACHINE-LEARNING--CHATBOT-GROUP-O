@@ -8,8 +8,6 @@ import re
 import time
 from datetime import datetime
 import streamlit as st
-import streamlit.components.v1 as components
-
 from utils import nice_source_name, is_greeting
 from retrieval import retrieve_top_k
 from generation import generate_answer, format_response
@@ -500,201 +498,7 @@ hr {
 # Voice input HTML component (Web Speech API)
 # ---------------------------------------------------------------------------
 
-VOICE_INPUT_HTML = """
-<style>
-  body { margin:0; background:#162d32; font-family:'DM Sans',sans-serif; }
-  .voice-bar {
-    display:flex; align-items:center; gap:0.75rem;
-    background:#162d32; border:1px solid #1f3d44;
-    border-radius:14px; padding:0.55rem 1rem;
-    transition:border-color 0.2s, box-shadow 0.2s;
-  }
-  .voice-bar.listening {
-    border-color:#2fb5a0;
-    box-shadow:0 0 0 3px rgba(47,181,160,0.12);
-  }
-  .mic-btn {
-    background:none; border:none; cursor:pointer;
-    font-size:1.3rem; line-height:1; padding:0.15rem;
-    transition:transform 0.15s; flex-shrink:0;
-  }
-  .mic-btn:hover { transform:scale(1.18); }
-  .mic-btn.active { animation:pulse 1s infinite; }
-  @keyframes pulse {
-    0%,100% { filter:drop-shadow(0 0 4px #2fb5a0); }
-    50%      { filter:drop-shadow(0 0 14px #2fb5a0); }
-  }
-  .voice-transcript {
-    flex:1; font-size:0.87rem; color:#8eaaa6;
-    font-style:italic; white-space:nowrap;
-    overflow:hidden; text-overflow:ellipsis; min-width:0;
-  }
-  .voice-transcript.has-text { color:#eef2f0; font-style:normal; }
-  .voice-status {
-    font-size:0.7rem; color:#4a6b66;
-    flex-shrink:0; letter-spacing:0.04em;
-  }
-  .voice-status.active { color:#2fb5a0; }
-  .voice-send-btn {
-    background:#2fb5a0; color:#fff; border:none;
-    border-radius:8px; padding:0.32rem 0.85rem;
-    font-size:0.78rem; cursor:pointer;
-    opacity:0; pointer-events:none;
-    transition:opacity 0.2s, transform 0.15s;
-    flex-shrink:0; font-weight:500;
-  }
-  .voice-send-btn.visible { opacity:1; pointer-events:auto; }
-  .voice-send-btn:hover { transform:translateY(-1px); }
-</style>
-<div class="voice-bar" id="voiceBar">
-    <button class="mic-btn" id="micBtn" title="Click to speak" onclick="toggleListening()">🎙️</button>
-    <span class="voice-transcript" id="transcript">Click the mic and speak your question…</span>
-    <span class="voice-status" id="voiceStatus">idle</span>
-    <button class="voice-send-btn" id="sendBtn" onclick="sendTranscript()">Send ↑</button>
-</div>
 
-<script>
-(function () {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    const micBtn      = document.getElementById('micBtn');
-    const voiceBar    = document.getElementById('voiceBar');
-    const transcript  = document.getElementById('transcript');
-    const voiceStatus = document.getElementById('voiceStatus');
-    const sendBtn     = document.getElementById('sendBtn');
-
-    let recognition = null;
-    let listening   = false;
-    let finalText   = '';
-
-    // ── browser support check ──────────────────────────────
-    if (!SpeechRecognition) {
-        transcript.textContent = '⚠ Voice input not supported in this browser. Try Chrome.';
-        micBtn.disabled = true;
-        micBtn.style.opacity = '0.4';
-        return;
-    }
-
-    // ── set up recognition ─────────────────────────────────
-    recognition = new SpeechRecognition();
-    recognition.continuous      = false;
-    recognition.interimResults  = true;
-    recognition.lang            = 'en-US';
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = function () {
-        listening = true;
-        micBtn.classList.add('active');
-        micBtn.textContent = '🔴';
-        voiceBar.classList.add('listening');
-        voiceStatus.textContent = 'listening…';
-        voiceStatus.classList.add('active');
-        transcript.textContent = '';
-        transcript.classList.remove('has-text');
-        sendBtn.classList.remove('visible');
-        finalText = '';
-    };
-
-    recognition.onresult = function (e) {
-        let interim = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-            const t = e.results[i][0].transcript;
-            if (e.results[i].isFinal) {
-                finalText += t + ' ';
-            } else {
-                interim += t;
-            }
-        }
-        const display = (finalText + interim).trim();
-        transcript.textContent = display || '…';
-        if (display) {
-            transcript.classList.add('has-text');
-        }
-    };
-
-    recognition.onspeechend = function () {
-        recognition.stop();
-    };
-
-    recognition.onend = function () {
-        listening = false;
-        micBtn.classList.remove('active');
-        micBtn.textContent = '🎙️';
-        voiceBar.classList.remove('listening');
-        voiceStatus.classList.remove('active');
-
-        finalText = finalText.trim();
-
-        if (finalText) {
-            transcript.textContent = finalText;
-            transcript.classList.add('has-text');
-            voiceStatus.textContent = 'done';
-            sendBtn.classList.add('visible');
-        } else {
-            transcript.textContent = 'No speech detected. Try again.';
-            transcript.classList.remove('has-text');
-            voiceStatus.textContent = 'idle';
-        }
-    };
-
-    recognition.onerror = function (e) {
-        listening = false;
-        micBtn.classList.remove('active');
-        micBtn.textContent = '🎙️';
-        voiceBar.classList.remove('listening');
-        voiceStatus.classList.remove('active');
-        voiceStatus.textContent = 'error';
-
-        const msgs = {
-            'not-allowed'  : '🔒 Microphone access denied. Please allow mic in browser settings.',
-            'network'      : '📡 Network error during recognition.',
-            'no-speech'    : 'No speech detected. Try again.',
-            'aborted'      : 'Listening cancelled.',
-        };
-        transcript.textContent = msgs[e.error] || ('Error: ' + e.error);
-        transcript.classList.remove('has-text');
-    };
-
-    // ── toggle function ────────────────────────────────────
-    window.toggleListening = function () {
-        if (listening) {
-            recognition.stop();
-        } else {
-            try {
-                recognition.start();
-            } catch (err) {
-                transcript.textContent = 'Could not start: ' + err.message;
-            }
-        }
-    };
-
-    // ── send function — posts text to Streamlit ────────────
-    window.sendTranscript = function () {
-        const text = finalText.trim();
-        if (!text) return;
-
-        // Post to the Streamlit parent frame via component value
-        window.parent.postMessage({
-            type: 'streamlit:setComponentValue',
-            value: text
-        }, '*');
-
-        // Reset UI
-        transcript.textContent = 'Sending…';
-        transcript.classList.remove('has-text');
-        sendBtn.classList.remove('visible');
-        voiceStatus.textContent = 'sent';
-        finalText = '';
-
-        // Reset to idle after a moment
-        setTimeout(function () {
-            transcript.textContent = 'Click the mic and speak your question…';
-            voiceStatus.textContent = 'idle';
-        }, 1500);
-    };
-})();
-</script>
-"""
 
 
 def inject_styles():
@@ -706,20 +510,40 @@ def inject_styles():
 # Voice input component wrapper
 # ---------------------------------------------------------------------------
 
-def render_voice_input() -> str | None:
+def render_voice_input():
     """
-    Renders the Web Speech API mic bar as an iframe component.
-    Returns the recognised text string when the user clicks Send, else None.
+    Renders a mic recorder using streamlit-mic-recorder.
+    Returns recognised text string or None.
+    Falls back gracefully if the package is not installed.
     """
-    result = components.html(
-        VOICE_INPUT_HTML,
-        height=68,
-        scrolling=False,
-    )
-    # components.html returns None until the component posts a value
-    if isinstance(result, str) and result.strip():
-        return result.strip()
-    return None
+    try:
+        from streamlit_mic_recorder import speech_to_text
+        st.markdown(
+            '''<div style="margin-bottom:0.5rem;">
+            <span style="font-size:0.78rem;color:#8eaaa6;letter-spacing:0.04em;">
+            🎙️ Voice input — click the mic to speak
+            </span></div>''',
+            unsafe_allow_html=True,
+        )
+        text = speech_to_text(
+            language="en",
+            start_prompt="🎙️ Click to speak",
+            stop_prompt="⏹️ Stop recording",
+            just_once=True,
+            use_container_width=True,
+            key="voice_recorder",
+        )
+        return text if text else None
+    except ImportError:
+        st.markdown(
+            '''<div style="background:#162d32;border:1px solid #1f3d44;
+            border-radius:14px;padding:0.55rem 1rem;margin-bottom:0.5rem;
+            font-size:0.82rem;color:#8eaaa6;">
+            🎙️ Install <code>streamlit-mic-recorder</code> to enable voice input
+            </div>''',
+            unsafe_allow_html=True,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -957,8 +781,12 @@ def render_chat(df, embeddings, emb_model, session_id):
             with st.chat_message(msg["role"], avatar=avatar):
                 st.markdown(msg["content"], unsafe_allow_html=True)
                 # Re-render stored sources for assistant messages
-                if msg["role"] == "assistant" and msg.get("sources"):
-                    render_sources(msg["sources"])
+                if msg["role"] == "assistant" and msg.get("sources") is not None:
+                    src = msg["sources"]
+                    import pandas as pd
+                    has_src = (not src.empty) if isinstance(src, pd.DataFrame) else bool(src)
+                    if has_src:
+                        render_sources(msg["sources"])
 
     # ── Voice input bar ───────────────────────────────────────
     voice_result = render_voice_input()
