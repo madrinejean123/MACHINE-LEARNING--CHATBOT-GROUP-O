@@ -80,9 +80,9 @@ html, body, .stApp {
     color: var(--text-primary) !important;
 }
 
-/* ── Streamlit native bar ────────────────────────────────── */
+/* ── Streamlit native bar — keep sidebar toggle visible ─── */
 header[data-testid="stHeader"] { background: var(--bg-base) !important; }
-[data-testid="stToolbar"]       { display: none !important; }
+[data-testid="collapsedControl"] { display: flex !important; }
 
 /* ── Tabs (Login / Register) ─────────────────────────────── */
 [data-testid="stTabs"] [role="tablist"] {
