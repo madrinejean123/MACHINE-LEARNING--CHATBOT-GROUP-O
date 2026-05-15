@@ -2,7 +2,9 @@
 # Safeguarding Companion
 # Link to demo #:
 https://www.google.com/url?q=https%3A%2F%2Fmadrine-safeguarding-companion.hf.space
+# Open the notebook here:
 
+https://colab.research.google.com/drive/1epT64vaRd4VwFXo7ObaCusNkx3KCr5l4?usp=sharing
 
 A RAG-based chatbot for inclusive university safeguarding support at Makerere University.
 
