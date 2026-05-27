@@ -10,7 +10,7 @@ A RAG-based chatbot for inclusive university safeguarding support at Makerere Un
 
 ## What it does
 
-Answers questions about university safeguarding policies, disability rights, sexual harassment reporting, and complaint procedures — grounded in official policy documents and written in plain English.
+Answers questions about university safeguarding policies, disability rights, sexual harassment reporting, and complaint procedures  grounded in official policy documents and written in plain English.
 
 ## Features
 
