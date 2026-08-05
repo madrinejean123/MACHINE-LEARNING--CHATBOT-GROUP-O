@@ -16,10 +16,12 @@ jobs:
 
       - name: Exclude data/ from Space sync
         run: |
-          git rm -r --cached data
+          git rm -r --cached data || true
+          echo "data/" >> .gitignore
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git commit -m "Exclude data/ from Space sync"
+          git add .gitignore
+          git commit -m "Exclude data/ from Space sync" || echo "No changes to commit"
 
       - name: Push to Hugging Face Space
         env:
