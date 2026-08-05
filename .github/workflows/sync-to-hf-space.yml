@@ -18,4 +18,4 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.huggingfacegithub }}
         run: |
-          git push https://madrine:${HF_TOKEN}@huggingface.co/spaces/madrine/safeguarding-companion main:main
+          git push --force https://madrine:${HF_TOKEN}@huggingface.co/spaces/madrine/safeguarding-companion main:main
