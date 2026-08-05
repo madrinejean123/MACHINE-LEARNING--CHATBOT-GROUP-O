@@ -2,10 +2,10 @@
 set -e
 
 echo "Starting FastAPI (Safeguarding Companion /ask API) on :8000 ..."
-uvicorn api:app --host 127.0.0.1 --port 8000 &
+/opt/venv-api/bin/uvicorn api:app --host 127.0.0.1 --port 8000 &
 
 echo "Starting Streamlit (chat UI) on :8501 ..."
-streamlit run app.py \
+/opt/venv-streamlit/bin/streamlit run app.py \
     --server.port 8501 \
     --server.address 127.0.0.1 \
     --server.headless true \

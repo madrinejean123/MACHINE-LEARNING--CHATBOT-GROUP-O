@@ -1,12 +1,16 @@
 # Runs the EXISTING Streamlit app and the new FastAPI /ask API in the same
 # Hugging Face Space, on the same public URL — nginx routes between them.
-# This replaces the Space's SDK from "streamlit" to "docker" but the Space
-# itself, its URL, and its Streamlit UI are unchanged.
+#
+# The two apps get SEPARATE Python virtual environments. This is
+# deliberate: Streamlit bundles its own internal Starlette server code
+# that is sensitive to the exact starlette version installed, and
+# FastAPI/uvicorn need a starlette version of their own. Installing both
+# into one shared environment lets pip's resolver pick a starlette that
+# satisfies one and silently breaks the other. Two venvs means each app's
+# dependencies are resolved completely independently.
 
 FROM python:3.11-slim
 
-# Same apt packages the app already declares in packages.txt (OCR + voice),
-# plus nginx to route between the two internal processes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     poppler-utils \
@@ -19,8 +23,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# --- venv 1: the existing Streamlit app, untouched dependency set ---
+RUN python -m venv /opt/venv-streamlit
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN /opt/venv-streamlit/bin/pip install --no-cache-dir -r requirements.txt
+
+# --- venv 2: the new FastAPI /ask API, fully isolated ---
+RUN python -m venv /opt/venv-api
+COPY requirements-api.txt .
+RUN /opt/venv-api/bin/pip install --no-cache-dir -r requirements-api.txt
 
 COPY . .
 

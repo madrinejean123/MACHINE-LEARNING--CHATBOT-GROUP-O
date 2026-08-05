@@ -1,0 +1,12 @@
+# Separate, isolated dependency set for api.py — installed into its own
+# venv in the Dockerfile so its fastapi/uvicorn/starlette versions can
+# never conflict with whatever Streamlit needs (that's what broke the
+# Streamlit UI earlier: both apps sharing one resolved environment).
+fastapi
+uvicorn[standard]
+sentence-transformers
+scikit-learn
+numpy
+pandas
+requests
+torch
