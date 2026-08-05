@@ -17,9 +17,15 @@ GITHUB_PDF_URLS = [
 # ---------------------------------------------------------------------------
 # Pre-built chunks on GitHub (downloaded at startup)
 # ---------------------------------------------------------------------------
-GITHUB_RAW_BASE    = "https://raw.githubusercontent.com/madrinejean123/MACHINE-LEARNING--CHATBOT-GROUP-O/madrine"
+GITHUB_RAW_BASE    = "https://raw.githubusercontent.com/madrinejean123/RAG-BASED-CHAT-BOT-MACHINE-LEARNING/main"
 CHUNK_CSV_URL      = f"{GITHUB_RAW_BASE}/policy_chunks.csv"
-EMBEDDINGS_NPY_URL = f"{GITHUB_RAW_BASE}/chunk_embeddings.npy"
+# chunk_embeddings.npy is stored via Git LFS — raw.githubusercontent.com only
+# serves the LFS *pointer* text, not the real binary. media.githubusercontent.com
+# resolves the actual LFS content, so the .npy file uses that host instead.
+EMBEDDINGS_NPY_URL = (
+    "https://media.githubusercontent.com/media/madrinejean123/"
+    "RAG-BASED-CHAT-BOT-MACHINE-LEARNING/main/chunk_embeddings.npy"
+)
 
 # ---------------------------------------------------------------------------
 # RAG settings

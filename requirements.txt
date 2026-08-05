@@ -1,6 +1,6 @@
 streamlit==1.57.0
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
+fastapi
+uvicorn[standard]
 transformers
 tokenizers
 sentence-transformers
