@@ -1,5 +1,9 @@
 streamlit==1.60.0
-starlette==0.40.0
+# Streamlit's vendored Starlette server code needs a starlette version that
+# has DEFAULT_EXCLUDED_CONTENT_TYPES (added 0.46.0) but predates the new
+# required thread_minimum_size gzip constructor arg (added 1.4.0). Verified
+# 1.2.0's GZipResponder signature matches what streamlit actually calls.
+starlette==1.2.0
 transformers
 tokenizers
 sentence-transformers
