@@ -11,13 +11,15 @@ process has no Streamlit runtime — it just loads once at startup instead.
 """
 
 import os
+import re
+import tempfile
 from contextlib import asynccontextmanager
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import requests as http_requests
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -77,6 +79,10 @@ class AskResponse(BaseModel):
     is_greeting: bool
 
 
+class TtsRequest(BaseModel):
+    text: str
+
+
 def _check_api_key(x_api_key: Optional[str]):
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
@@ -114,3 +120,37 @@ def ask(body: AskRequest, x_api_key: Optional[str] = Header(default=None)):
                 sources.append(name)
 
     return AskResponse(answer=answer, sources=sources, is_greeting=False)
+
+
+@app.post("/tts")
+def tts(body: TtsRequest, x_api_key: Optional[str] = Header(default=None)):
+    _check_api_key(x_api_key)
+
+    # Same cleanup as the Streamlit app's _speak() in ui/chat.py — strip
+    # markdown symbols, collapse whitespace, cap length.
+    clean_text = re.sub(r"[•*#_]", "", body.text)
+    clean_text = " ".join(clean_text.split())[:800]
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="text must not be empty")
+
+    import pyttsx3
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    tmp.close()
+    try:
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 160)
+        engine.setProperty("volume", 1.0)
+        engine.save_to_file(clean_text, tmp.name)
+        engine.runAndWait()
+        engine.stop()
+
+        with open(tmp.name, "rb") as f:
+            wav_bytes = f.read()
+
+        if len(wav_bytes) < 1000:
+            raise HTTPException(status_code=500, detail="TTS produced an empty/invalid file")
+
+        return Response(content=wav_bytes, media_type="audio/wav")
+    finally:
+        os.unlink(tmp.name)
